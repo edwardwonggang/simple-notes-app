@@ -1,0 +1,40 @@
+
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Success Test Page</title>
+        <style>
+            body { font-family: Arial, sans-serif; padding: 50px; }
+            .success { color: green; font-size: 24px; font-weight: bold; }
+            .form { margin: 20px 0; }
+            input { padding: 10px; margin: 5px; width: 300px; }
+            button { padding: 10px 20px; background: blue; color: white; border: none; }
+        </style>
+    </head>
+    <body>
+        <h1>Augment Code Registration Test</h1>
+        
+        <div class="form">
+            <input type="email" name="username" placeholder="Enter your email" id="email-input">
+            <br>
+            <button type="submit" onclick="showSuccess()">Continue</button>
+        </div>
+        
+        <div id="result" style="display: none;">
+            <div class="success">Success!</div>
+            <p>Registration completed successfully!</p>
+        </div>
+        
+        <script>
+            function showSuccess() {
+                const email = document.getElementById('email-input').value;
+                if (email) {
+                    setTimeout(() => {
+                        document.getElementById('result').style.display = 'block';
+                    }, 2000);
+                }
+            }
+        </script>
+    </body>
+    </html>
+    
