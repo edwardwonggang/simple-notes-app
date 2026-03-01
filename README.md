@@ -29,3 +29,11 @@ npm run dist:win
 
 - 输出目录：`dist/`
 - 若需同时打包（在当前系统支持范围内）：`npm run dist`
+
+## Windows 一键打包脚本
+- 文件：`build-win.bat`
+- 用法：在 Windows 上双击 `build-win.bat`
+- 脚本会自动执行：
+  1. 检查 Node.js
+  2. 安装依赖（`npm install`）
+  3. 打包 exe（`npm run dist:win`）
