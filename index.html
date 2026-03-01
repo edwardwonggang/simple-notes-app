@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>酷炫桌面小工具</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="bg-glow"></div>
+    <main class="widget">
+      <section class="toolbar">
+        <button
+          id="toggleTop"
+          class="icon-btn"
+          aria-label="置顶窗口"
+          title="置顶窗口"
+        >
+          <span aria-hidden="true">📌</span>
+        </button>
+        <button
+          id="clearAll"
+          class="icon-btn danger"
+          aria-label="清空全部"
+          title="清空全部"
+        >
+          <span aria-hidden="true">🗑</span>
+        </button>
+      </section>
+
+      <section
+        id="editor"
+        class="editor"
+        contenteditable="true"
+        spellcheck="false"
+        aria-label="可编辑文本区域"
+      ></section>
+
+      <footer class="hint" id="hint"></footer>
+    </main>
+
+    <script src="renderer.js"></script>
+  </body>
+</html>
