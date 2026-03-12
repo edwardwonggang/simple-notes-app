@@ -17,7 +17,7 @@ function isWindowsRuntime() {
 function getAppDataPath() {
   const fromEnv = process.env.WPS_PLUGIN_APPDATA || process.env.APPDATA
   if (!fromEnv) {
-    throw new Error("未找到 APPDATA 环境变量，无法写入 Windows 的 publish.xml")
+    throw new Error("APPDATA is not set, cannot write Windows publish.xml.")
   }
   return fromEnv
 }
@@ -38,6 +38,7 @@ async function ensureLocalConfig() {
   if (existsSync(configLocalPath)) {
     return false
   }
+
   await copyFile(configExamplePath, configLocalPath)
   return true
 }
@@ -54,7 +55,9 @@ async function readProjectConfig() {
 
 function upsertPluginEntry(xml, pluginEntry, addonName) {
   const rootMatch = /<jsplugins\b[^>]*>[\s\S]*<\/jsplugins>/i
-  const baseXml = rootMatch.test(xml) ? xml : "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<jsplugins>\n</jsplugins>\n"
+  const baseXml = rootMatch.test(xml)
+    ? xml
+    : "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<jsplugins>\n</jsplugins>\n"
   const entryPattern = new RegExp(
     `<jspluginonline\\b[\\s\\S]*?\\bname=\"${escapeRegExp(escapeXmlAttribute(addonName))}\"[\\s\\S]*?\\/?>\\s*`,
     "gi"
@@ -69,7 +72,7 @@ function upsertPluginEntry(xml, pluginEntry, addonName) {
 
 async function main() {
   if (!isWindowsRuntime()) {
-    throw new Error("该脚本用于 Windows；如需本机验证，请设置 WPS_PLUGIN_FORCE_WINDOWS=1")
+    throw new Error("This script is for Windows. Set WPS_PLUGIN_FORCE_WINDOWS=1 if you need to test locally.")
   }
 
   const { name, addonType } = await readProjectConfig()
@@ -89,11 +92,12 @@ async function main() {
   await mkdir(path.dirname(publishXmlPath), { recursive: true })
   await writeFile(publishXmlPath, nextXml, "utf8")
 
-  console.log(`已写入 Windows 注册文件：${publishXmlPath}`)
-  console.log(`插件地址：${serverUrl}`)
+  console.log(`Windows registration file written: ${publishXmlPath}`)
+  console.log(`Plugin URL: ${serverUrl}`)
+
   if (createdConfig) {
-    console.log(`已创建本地配置：${configLocalPath}`)
-    console.log("请先填写 API URL / API Key / 模型 ID，再重新运行启动脚本。")
+    console.log(`Created local config: ${configLocalPath}`)
+    console.log("Fill in API URL / API Key / model ID, then run the startup script again.")
   }
 }
 
