@@ -73,3 +73,7 @@ Windows 下的最简使用说明见：
 - 手动填写 `代理 URL`
 - 自动尝试读取 Windows 系统代理
 - 必要时临时开启 `忽略 TLS 证书错误`
+
+Windows 启动脚本如果失败，也会自动把日志写到：
+
+- `.run/windows-start-时间戳.log`
