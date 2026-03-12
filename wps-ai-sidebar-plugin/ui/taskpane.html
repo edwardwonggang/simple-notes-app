@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>WPS AI 对话</title>
+    <link rel="stylesheet" href="./taskpane.css">
+</head>
+<body>
+    <div class="app-shell">
+        <header class="topbar">
+            <div class="title-block">
+                <h1>AI 对话</h1>
+                <p id="selectionHint">未读取选区，可直接提问</p>
+            </div>
+        </header>
+
+        <section class="chat-shell">
+            <div id="messages" class="messages"></div>
+
+            <div class="composer">
+                <textarea id="promptInput" placeholder="输入问题，Enter 发送，Shift+Enter 换行"></textarea>
+                <div class="composer-footer">
+                    <span id="statusText" class="status-text">正在连接本地 AI…</span>
+                    <div class="composer-actions">
+                        <button id="openConfigBtn" class="tool-btn small ghost-btn" type="button">设置</button>
+                        <button id="sendBtn" class="send-btn" type="button">发送</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <div id="configOverlay" class="config-overlay hidden" aria-hidden="true">
+            <div class="config-backdrop" data-config-close="true"></div>
+            <section class="config-panel" role="dialog" aria-modal="true" aria-labelledby="configTitle">
+                <div class="config-header">
+                    <div>
+                        <h2 id="configTitle">API 配置</h2>
+                        <p>保存后将写入本地 `config.local.json`。</p>
+                    </div>
+                    <button id="closeConfigBtn" class="icon-btn small" type="button" title="关闭配置" aria-label="关闭配置">
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="m6 6 12 12" />
+                            <path d="M18 6 6 18" />
+                        </svg>
+                    </button>
+                </div>
+                <form id="configForm" class="config-form">
+                    <label class="field">
+                        <span>API URL</span>
+                        <input id="configBaseUrl" name="baseUrl" type="url" autocomplete="off" spellcheck="false" placeholder="https://integrate.api.nvidia.com/v1">
+                    </label>
+                    <label class="field">
+                        <span>API Key</span>
+                        <input id="configApiKey" name="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="输入 API Key">
+                    </label>
+                    <label class="field">
+                        <span>模型 ID</span>
+                        <input id="configModel" name="model" type="text" autocomplete="off" spellcheck="false" placeholder="stepfun-ai/step-3.5-flash">
+                    </label>
+                    <label class="field">
+                        <span>最大输出 Tokens</span>
+                        <input id="configMaxTokens" name="maxTokens" type="number" min="256" step="256" inputmode="numeric" placeholder="8192">
+                    </label>
+                    <p id="configStatusText" class="config-status">会自动读取当前配置，保存后下次打开继续生效。</p>
+                    <div class="config-actions">
+                        <button id="cancelConfigBtn" class="tool-btn" type="button">取消</button>
+                        <button id="saveConfigBtn" class="send-btn" type="submit">保存配置</button>
+                    </div>
+                </form>
+            </section>
+        </div>
+    </div>
+
+    <script type="text/javascript" src="../js/util.js"></script>
+    <script type="text/javascript" src="../js/taskpane.js"></script>
+</body>
+</html>

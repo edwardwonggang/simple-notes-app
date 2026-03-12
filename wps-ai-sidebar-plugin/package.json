@@ -1,0 +1,24 @@
+{
+	"name": "wps-ai-sidebar-plugin",
+	"version": "1.0.0",
+	"private": true,
+	"addonType": "wps",
+	"scripts": {
+		"dev": "vite --port 3889",
+		"build": "node scripts/build-static.mjs",
+		"preview": "vite preview",
+		"debug": "wpsjs debug",
+		"debug:server": "wpsjs debug -s -p 32123",
+		"windows:register": "node scripts/windows-register.mjs",
+		"windows:unregister": "node scripts/windows-unregister.mjs",
+		"windows:dev": "node scripts/windows-register.mjs && vite --host 127.0.0.1 --port 3889",
+		"smoke:api": "node scripts/smoke-test.mjs",
+		"test": "npm run build && npm run smoke:api"
+	},
+	"description": "WPS 右侧 AI 写作助手插件",
+	"devDependencies": {
+		"wps-jsapi-declare": "latest",
+		"vite": "^5.3.1",
+		"wpsjs": "latest"
+	}
+}
