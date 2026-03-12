@@ -62,26 +62,8 @@ npm run debug:server
 6. 问题与 AI 回复会流式写入文档末尾
 7. 右下角 `设置` 可修改 `API URL`、`API Key`、`模型 ID` 和 `Max Tokens`
 
-## Windows 评估
+## Windows
 
-可以在 Windows 上使用，但不是“纯静态拷贝即用”。
+Windows 下的最简使用说明见：
 
-原因是当前实现为了不把 API Key 暴露到前端，采用了本地 `Vite` 服务提供 `/api/config` 和 `/api/chat` 代理。因此：
-
-- 直接拷贝 `dist/` 到 Windows 上离线加载：不行
-- 在 Windows 上跑本地 Node 服务并注册到 WPS：可以
-
-仓库内已提供 Windows 脚本：
-
-- `scripts/windows-start.cmd`：一键安装依赖、注册插件、启动本地服务
-- `scripts/windows-unregister.cmd`：移除 WPS 中的本地注册
-- `npm run windows:register`：仅写入 Windows 的 `publish.xml`
-- `npm run windows:dev`：注册后启动本地服务
-
-首次在 Windows 使用：
-
-1. 双击 `scripts/windows-start.cmd`
-2. 首次运行会自动创建 `config.local.json`
-3. 填入 API URL、API Key、模型 ID
-4. 再次运行 `scripts/windows-start.cmd`
-5. 保持脚本窗口不关闭，然后打开 WPS 使用插件
+- `WINDOWS.md`
