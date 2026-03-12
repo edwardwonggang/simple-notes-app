@@ -17,8 +17,9 @@
 	},
 	"description": "WPS 右侧 AI 写作助手插件",
 	"devDependencies": {
-		"wps-jsapi-declare": "latest",
+		"undici": "^6.23.0",
 		"vite": "^5.3.1",
+		"wps-jsapi-declare": "latest",
 		"wpsjs": "latest"
 	}
 }

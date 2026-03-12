@@ -47,6 +47,19 @@
 - `config.local.json` 只保存在本地电脑
 - `config.local.json` 不会提交到 GitHub
 
+## 如果提示 `HTTP: fetch failed`
+
+大概率是公司网络代理或 HTTPS 证书拦截导致的。
+
+你可以按这个顺序试：
+
+1. 打开插件里的 `设置`
+2. 在 `代理 URL` 填你公司的代理地址
+3. 保存后，重启 `scripts/windows-start.cmd`
+4. 如果还不行，再勾选：
+   - `忽略 TLS 证书错误`
+5. 再保存并重启一次
+
 ## 为什么不能直接丢到 Windows 就用
 
 因为这个插件要通过本地服务转发 AI 请求，这样 API Key 不会暴露到前端页面。

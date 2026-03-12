@@ -96,6 +96,8 @@
         const apiKeyInput = $id("configApiKey")
         const modelInput = $id("configModel")
         const maxTokensInput = $id("configMaxTokens")
+        const proxyUrlInput = $id("configProxyUrl")
+        const allowInsecureTlsInput = $id("configAllowInsecureTls")
 
         if (baseUrlInput) {
             baseUrlInput.value = config.baseUrl || ""
@@ -109,7 +111,13 @@
         if (maxTokensInput) {
             maxTokensInput.value = String(config.maxTokens || 8192)
         }
-        setConfigStatus("会自动读取当前配置，保存后下次打开继续生效。", false)
+        if (proxyUrlInput) {
+            proxyUrlInput.value = config.proxyUrl || ""
+        }
+        if (allowInsecureTlsInput) {
+            allowInsecureTlsInput.checked = Boolean(config.allowInsecureTls)
+        }
+        setConfigStatus("会自动读取当前配置；公司网络报错时，可补充代理 URL。", false)
     }
 
     function setConfigPanelOpen(open) {
@@ -149,7 +157,7 @@
             ? "当前模式：你的问题和 AI 回复会实时写入文档末尾。现在正在逐段输出到文档中…"
             : state.lastReply
                 ? "当前模式：问答不会显示在侧栏，而是直接写到文档末尾。最近一次回复已写入文末，可继续提问或用上方按钮复制最近回复。"
-                : "当前模式：你的问题和 AI 回复会实时写到文档末尾。侧栏只保留输入框、状态和快捷按钮。"
+                : "当前模式：你的问题和 AI 回复会实时写到文档末尾。侧栏只保留输入框、状态和设置。"
         container.appendChild(note)
     }
 
@@ -406,6 +414,8 @@
             baseUrl: config.baseUrl || "",
             apiKey: config.apiKey || "",
             model: config.model,
+            proxyUrl: config.proxyUrl || "",
+            allowInsecureTls: Boolean(config.allowInsecureTls),
             temperature: config.temperature ?? 0.2,
             maxTokens: config.maxTokens ?? 8192,
             proxyPath: config.proxyPath
@@ -419,10 +429,14 @@
         const apiKeyInput = $id("configApiKey")
         const modelInput = $id("configModel")
         const maxTokensInput = $id("configMaxTokens")
+        const proxyUrlInput = $id("configProxyUrl")
+        const allowInsecureTlsInput = $id("configAllowInsecureTls")
         const payload = {
             baseUrl: normalizeText(baseUrlInput && baseUrlInput.value),
             apiKey: normalizeText(apiKeyInput && apiKeyInput.value),
             model: normalizeText(modelInput && modelInput.value),
+            proxyUrl: normalizeText(proxyUrlInput && proxyUrlInput.value),
+            allowInsecureTls: Boolean(allowInsecureTlsInput && allowInsecureTlsInput.checked),
             maxTokens: Number(maxTokensInput && maxTokensInput.value) || 8192
         }
 
@@ -442,6 +456,8 @@
                 baseUrl: config.baseUrl || "",
                 apiKey: config.apiKey || "",
                 model: config.model || "",
+                proxyUrl: config.proxyUrl || "",
+                allowInsecureTls: Boolean(config.allowInsecureTls),
                 temperature: config.temperature ?? 0.2,
                 maxTokens: config.maxTokens ?? 8192,
                 proxyPath: config.proxyPath || "/api/chat"
@@ -925,14 +941,57 @@
     function createDocumentTailWriter(promptText) {
         const writer = {
             wroteContent: false,
-            closed: false
+            closed: false,
+            leadingContentPending: true,
+            trailingNewlines: 0
         }
 
-        writeTextVisiblyAtDocumentEnd(`\n\n━━━━━━━━━━ AI 对话 ━━━━━━━━━━\n时间：${formatNow()}\n\n问题：\n${promptText}\n\n回答：\n`)
+        function compactDocumentText(text, options) {
+            const value = String(text || "").replace(/\r/g, "")
+            const settings = options || {}
+            let result = ""
+
+            for (const char of value) {
+                if (char === "\n") {
+                    if (settings.skipLeadingNewlines && writer.leadingContentPending && !writer.wroteContent) {
+                        continue
+                    }
+                    if (writer.trailingNewlines >= 2) {
+                        continue
+                    }
+                    result += "\n"
+                    writer.trailingNewlines += 1
+                    continue
+                }
+
+                result += char
+                writer.trailingNewlines = 0
+                writer.leadingContentPending = false
+            }
+
+            return result
+        }
+
+        const compactPrompt = String(promptText || "")
+            .replace(/\r/g, "")
+            .replace(/\n{3,}/g, "\n\n")
+            .trim()
+        const doc = getActiveDocumentSafe()
+        let headerPrefix = "\n"
+
+        try {
+            const existingText = doc && doc.Content && typeof doc.Content.Text === "string"
+                ? String(doc.Content.Text || "").replace(/\r/g, "").trim()
+                : ""
+            headerPrefix = existingText ? "\n" : ""
+        } catch (_error) {
+        }
+
+        writeTextVisiblyAtDocumentEnd(`${headerPrefix}【AI 对话 ${formatNow()}】\n问题：${compactPrompt}\n回答：\n`)
 
         return {
             append(text) {
-                const value = String(text || "")
+                const value = compactDocumentText(text, { skipLeadingNewlines: true })
                 if (!value || writer.closed) {
                     return
                 }
@@ -945,14 +1004,14 @@
                 if (writer.closed) {
                     return
                 }
-                writeTextVisiblyAtDocumentEnd("\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+                writeTextVisiblyAtDocumentEnd("\n——\n")
                 writer.closed = true
             },
             fail(message) {
                 if (writer.closed) {
                     return
                 }
-                writeTextVisiblyAtDocumentEnd(`\n\n[输出中断：${message}]\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`)
+                writeTextVisiblyAtDocumentEnd(`\n[输出中断：${message}]\n——\n`)
                 writer.closed = true
             },
             hasContent() {

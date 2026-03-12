@@ -67,3 +67,9 @@ npm run debug:server
 Windows 下的最简使用说明见：
 
 - `WINDOWS.md`
+
+公司网络下如果出现 `HTTP: fetch failed`，现在也支持：
+
+- 手动填写 `代理 URL`
+- 自动尝试读取 Windows 系统代理
+- 必要时临时开启 `忽略 TLS 证书错误`
