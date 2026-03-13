@@ -963,7 +963,7 @@
         let streamResult = null
 
         try {
-            documentWriter = createDocumentTailWriter(normalizedPrompt)
+            documentWriter = createRenderedDocumentTailWriter(normalizedPrompt)
 
             do {
                 currentSegmentText = ""
@@ -1198,38 +1198,677 @@
         appendTextToDocumentEnd(value)
     }
 
+    function getDocumentRangeByPosition(start, end) {
+        const doc = getActiveDocumentSafe()
+        if (!doc || typeof doc.Range !== "function") {
+            return null
+        }
+
+        try {
+            return doc.Range(start, end)
+        } catch (_error) {
+            return null
+        }
+    }
+
+    function setRangeText(range, value) {
+        if (!range) {
+            return
+        }
+
+        if (typeof range.Text === "string") {
+            range.Text = value
+            return
+        }
+
+        if (typeof range.InsertAfter === "function") {
+            range.InsertAfter(value)
+        }
+    }
+
+    function collapseRangeToEnd(range) {
+        if (range && typeof range.Collapse === "function") {
+            range.Collapse(false)
+        }
+        return range
+    }
+
+    function countLeadingSpaces(value) {
+        const match = String(value || "").match(/^ */)
+        return match ? match[0].length : 0
+    }
+
+    function parseInlineMarkdown(text) {
+        const value = String(text || "")
+        const tokens = []
+        let index = 0
+
+        function pushText(fragment) {
+            if (!fragment) {
+                return
+            }
+            const previous = tokens[tokens.length - 1]
+            if (previous && previous.type === "text") {
+                previous.text += fragment
+            } else {
+                tokens.push({ type: "text", text: fragment })
+            }
+        }
+
+        while (index < value.length) {
+            if (value.startsWith("**", index) || value.startsWith("__", index)) {
+                const marker = value.slice(index, index + 2)
+                const closeIndex = value.indexOf(marker, index + 2)
+                if (closeIndex > index + 2) {
+                    tokens.push({
+                        type: "strong",
+                        children: parseInlineMarkdown(value.slice(index + 2, closeIndex))
+                    })
+                    index = closeIndex + 2
+                    continue
+                }
+            }
+
+            if (value[index] === "`") {
+                const closeIndex = value.indexOf("`", index + 1)
+                if (closeIndex > index + 1) {
+                    tokens.push({
+                        type: "code",
+                        text: value.slice(index + 1, closeIndex)
+                    })
+                    index = closeIndex + 1
+                    continue
+                }
+            }
+
+            if (value[index] === "[") {
+                const middleIndex = value.indexOf("](", index + 1)
+                const closeIndex = middleIndex >= 0 ? value.indexOf(")", middleIndex + 2) : -1
+                if (middleIndex > index + 1 && closeIndex > middleIndex + 2) {
+                    tokens.push({
+                        type: "link",
+                        href: value.slice(middleIndex + 2, closeIndex),
+                        children: parseInlineMarkdown(value.slice(index + 1, middleIndex))
+                    })
+                    index = closeIndex + 1
+                    continue
+                }
+            }
+
+            if (value[index] === "*" || value[index] === "_") {
+                const marker = value[index]
+                const closeIndex = value.indexOf(marker, index + 1)
+                if (closeIndex > index + 1) {
+                    tokens.push({
+                        type: "em",
+                        children: parseInlineMarkdown(value.slice(index + 1, closeIndex))
+                    })
+                    index = closeIndex + 1
+                    continue
+                }
+            }
+
+            const nextSpecial = value.slice(index + 1).search(/(\*\*|__|`|\[|\*|_)/)
+            if (nextSpecial === -1) {
+                pushText(value.slice(index))
+                break
+            }
+
+            pushText(value.slice(index, index + nextSpecial + 1))
+            index += nextSpecial + 1
+        }
+
+        return tokens
+    }
+
+    function inlineTokensToTextAndStyles(tokens, activeStyle, acc) {
+        const style = activeStyle || {}
+        const output = acc || { text: "", spans: [] }
+
+        ;(tokens || []).forEach((token) => {
+            if (!token) {
+                return
+            }
+
+            if (token.type === "text") {
+                const start = output.text.length
+                const textValue = token.text || ""
+                output.text += textValue
+                if (style.bold || style.italic || style.link) {
+                    output.spans.push({
+                        start,
+                        end: output.text.length,
+                        bold: style.bold,
+                        italic: style.italic,
+                        link: style.link
+                    })
+                }
+                return
+            }
+
+            if (token.type === "code") {
+                const start = output.text.length
+                output.text += token.text || ""
+                output.spans.push({
+                    start,
+                    end: output.text.length,
+                    code: true
+                })
+                return
+            }
+
+            inlineTokensToTextAndStyles(token.children || [], {
+                bold: style.bold || token.type === "strong",
+                italic: style.italic || token.type === "em",
+                link: style.link || token.type === "link"
+            }, output)
+        })
+
+        return output
+    }
+
+    function parseMarkdownBlocks(text) {
+        const lines = normalizeLineBreaks(text || "").split("\n")
+        const blocks = []
+        let index = 0
+        let paragraphLines = []
+
+        function flushParagraph() {
+            if (!paragraphLines.length) {
+                return
+            }
+
+            const textValue = paragraphLines.join(" ").replace(/\s+/g, " ").trim()
+            if (textValue) {
+                blocks.push({
+                    type: "paragraph",
+                    tokens: parseInlineMarkdown(textValue)
+                })
+            }
+            paragraphLines = []
+        }
+
+        while (index < lines.length) {
+            const line = lines[index]
+            const trimmed = line.trim()
+
+            if (!trimmed) {
+                flushParagraph()
+                index += 1
+                continue
+            }
+
+            if (/^```/.test(trimmed)) {
+                flushParagraph()
+                index += 1
+                const codeLines = []
+                while (index < lines.length && !/^```/.test(lines[index].trim())) {
+                    codeLines.push(lines[index])
+                    index += 1
+                }
+                if (index < lines.length) {
+                    index += 1
+                }
+                blocks.push({
+                    type: "code",
+                    text: codeLines.join("\n")
+                })
+                continue
+            }
+
+            const headingMatch = trimmed.match(/^(#{1,6})\s+(.+)$/)
+            if (headingMatch) {
+                flushParagraph()
+                blocks.push({
+                    type: "heading",
+                    level: headingMatch[1].length,
+                    tokens: parseInlineMarkdown(headingMatch[2].trim())
+                })
+                index += 1
+                continue
+            }
+
+            if (/^([-*_])(\s*\1){2,}\s*$/.test(trimmed)) {
+                flushParagraph()
+                blocks.push({ type: "hr" })
+                index += 1
+                continue
+            }
+
+            if (/^>\s?/.test(trimmed)) {
+                flushParagraph()
+                const quoteLines = []
+                while (index < lines.length && /^>\s?/.test(lines[index].trim())) {
+                    quoteLines.push(lines[index].trim().replace(/^>\s?/, ""))
+                    index += 1
+                }
+                blocks.push({
+                    type: "blockquote",
+                    tokens: parseInlineMarkdown(quoteLines.join(" ").trim())
+                })
+                continue
+            }
+
+            const listMatch = line.match(/^(\s*)([-+*]|\d+\.)\s+(.+)$/)
+            if (listMatch) {
+                flushParagraph()
+                const ordered = /\d+\./.test(listMatch[2])
+                const items = []
+
+                while (index < lines.length) {
+                    const currentLine = lines[index]
+                    const currentMatch = currentLine.match(/^(\s*)([-+*]|\d+\.)\s+(.+)$/)
+                    if (!currentMatch || /\d+\./.test(currentMatch[2]) !== ordered) {
+                        break
+                    }
+
+                    const level = Math.floor(countLeadingSpaces(currentMatch[1]) / 2)
+                    let itemText = currentMatch[3].trim()
+                    index += 1
+
+                    while (index < lines.length) {
+                        const continuation = lines[index]
+                        const continuationTrimmed = continuation.trim()
+                        if (!continuationTrimmed) {
+                            break
+                        }
+                        if (/^(\s*)([-+*]|\d+\.)\s+(.+)$/.test(continuation)) {
+                            break
+                        }
+                        if (/^(#{1,6})\s+/.test(continuationTrimmed) || /^>\s?/.test(continuationTrimmed) || /^```/.test(continuationTrimmed)) {
+                            break
+                        }
+                        itemText += ` ${continuationTrimmed}`
+                        index += 1
+                    }
+
+                    items.push({
+                        level,
+                        tokens: parseInlineMarkdown(itemText)
+                    })
+                }
+
+                blocks.push({
+                    type: "list",
+                    ordered,
+                    items
+                })
+                continue
+            }
+
+            paragraphLines.push(trimmed)
+            index += 1
+        }
+
+        flushParagraph()
+        return blocks
+    }
+
+    function safeApplyFont(range, updater) {
+        if (!range || !range.Font || typeof updater !== "function") {
+            return
+        }
+        try {
+            updater(range.Font)
+        } catch (_error) {
+        }
+    }
+
+    function safeApplyParagraphFormat(range, updater) {
+        if (!range || !range.ParagraphFormat || typeof updater !== "function") {
+            return
+        }
+        try {
+            updater(range.ParagraphFormat)
+        } catch (_error) {
+        }
+    }
+
+    function insertTextAtPosition(position, text) {
+        const value = String(text || "")
+        if (!value) {
+            return null
+        }
+
+        const insertionRange = getDocumentRangeByPosition(position, position)
+        if (!insertionRange) {
+            return null
+        }
+
+        if (typeof insertionRange.InsertAfter === "function") {
+            insertionRange.InsertAfter(value)
+        } else {
+            setRangeText(insertionRange, value)
+        }
+
+        return getDocumentRangeByPosition(position, position + value.length)
+    }
+
+    function applyInlineStyles(baseStart, spans) {
+        ;(spans || []).forEach((span) => {
+            if (!span || span.end <= span.start) {
+                return
+            }
+
+            const range = getDocumentRangeByPosition(baseStart + span.start, baseStart + span.end)
+            if (!range) {
+                return
+            }
+
+            if (span.bold) {
+                try {
+                    range.Bold = 1
+                } catch (_error) {
+                }
+            }
+            if (span.italic) {
+                try {
+                    range.Italic = 1
+                } catch (_error) {
+                }
+            }
+            if (span.code) {
+                safeApplyFont(range, (font) => {
+                    font.Name = "Consolas"
+                })
+            }
+            if (span.link) {
+                try {
+                    range.Underline = 1
+                } catch (_error) {
+                }
+            }
+        })
+    }
+
+    function applyHeadingStyle(range, level) {
+        const sizeMap = {
+            1: 18,
+            2: 16,
+            3: 14,
+            4: 13,
+            5: 12,
+            6: 11
+        }
+
+        try {
+            range.Bold = 1
+        } catch (_error) {
+        }
+
+        safeApplyFont(range, (font) => {
+            font.Bold = 1
+            font.Size = sizeMap[level] || 12
+        })
+        safeApplyParagraphFormat(range, (format) => {
+            format.SpaceAfter = level <= 2 ? 6 : 3
+        })
+    }
+
+    function applyParagraphStyle(range) {
+        safeApplyParagraphFormat(range, (format) => {
+            format.SpaceAfter = 0
+        })
+    }
+
+    function applyQuoteStyle(range) {
+        safeApplyParagraphFormat(range, (format) => {
+            format.LeftIndent = 18
+            format.SpaceAfter = 0
+        })
+        try {
+            range.Italic = 1
+        } catch (_error) {
+        }
+    }
+
+    function applyCodeBlockStyle(range) {
+        safeApplyParagraphFormat(range, (format) => {
+            format.LeftIndent = 18
+            format.SpaceAfter = 0
+        })
+        safeApplyFont(range, (font) => {
+            font.Name = "Consolas"
+        })
+    }
+
+    function insertStyledParagraph(position, tokens, blockType, level) {
+        const inline = inlineTokensToTextAndStyles(tokens || [])
+        const textValue = inline.text || ""
+        const insertedRange = insertTextAtPosition(position, `${textValue}\n`)
+        if (!insertedRange) {
+            return position
+        }
+
+        const textRange = getDocumentRangeByPosition(position, position + textValue.length)
+        if (textRange) {
+            if (blockType === "heading") {
+                applyHeadingStyle(textRange, level)
+            } else if (blockType === "blockquote") {
+                applyQuoteStyle(textRange)
+            } else {
+                applyParagraphStyle(textRange)
+            }
+            applyInlineStyles(position, inline.spans)
+        }
+
+        return position + textValue.length + 1
+    }
+
+    function insertStyledList(position, block) {
+        let cursor = position
+        const paragraphs = []
+
+        ;(block.items || []).forEach((item) => {
+            const inline = inlineTokensToTextAndStyles(item.tokens || [])
+            const textValue = inline.text || ""
+            const paragraphStart = cursor
+            const insertedRange = insertTextAtPosition(cursor, `${textValue}\n`)
+            if (!insertedRange) {
+                return
+            }
+            paragraphs.push({
+                start: paragraphStart,
+                end: paragraphStart + textValue.length,
+                level: item.level || 0,
+                spans: inline.spans
+            })
+            cursor += textValue.length + 1
+        })
+
+        paragraphs.forEach((paragraph) => {
+            const range = getDocumentRangeByPosition(paragraph.start, paragraph.end)
+            if (!range) {
+                return
+            }
+
+            try {
+                if (block.ordered) {
+                    range.ListFormat.ApplyNumberDefault()
+                } else {
+                    range.ListFormat.ApplyBulletDefault()
+                }
+            } catch (_error) {
+            }
+
+            for (let levelIndex = 0; levelIndex < paragraph.level; levelIndex += 1) {
+                try {
+                    range.ListFormat.ListIndent()
+                } catch (_error) {
+                    break
+                }
+            }
+
+            applyInlineStyles(paragraph.start, paragraph.spans)
+        })
+
+        return cursor
+    }
+
+    function insertHorizontalRule(position) {
+        const textValue = "────────"
+        const insertedRange = insertTextAtPosition(position, `${textValue}\n`)
+        if (!insertedRange) {
+            return position
+        }
+
+        const textRange = getDocumentRangeByPosition(position, position + textValue.length)
+        if (textRange) {
+            safeApplyFont(textRange, (font) => {
+                font.Color = 8421504
+            })
+        }
+
+        return position + textValue.length + 1
+    }
+
+    function insertCodeBlock(position, text) {
+        const value = String(text || "")
+        const insertedRange = insertTextAtPosition(position, `${value}\n`)
+        if (!insertedRange) {
+            return position
+        }
+
+        const textRange = getDocumentRangeByPosition(position, position + value.length)
+        if (textRange) {
+            applyCodeBlockStyle(textRange)
+        }
+
+        return position + value.length + 1
+    }
+
+    function renderMarkdownIntoRange(range, markdownText) {
+        const targetRange = range && range.Duplicate ? range.Duplicate : range
+        if (!targetRange) {
+            throw new Error("当前没有可写入的文档位置，请先打开一个可编辑文档。")
+        }
+
+        const start = Number(targetRange.Start)
+        const end = Number(targetRange.End)
+        if (!Number.isFinite(start) || !Number.isFinite(end)) {
+            throw new Error("无法定位文档写入范围。")
+        }
+
+        const cleanRange = getDocumentRangeByPosition(start, end)
+        if (!cleanRange) {
+            throw new Error("无法获取文档写入范围。")
+        }
+
+        setRangeText(cleanRange, "")
+
+        const blocks = parseMarkdownBlocks(markdownText)
+        let cursor = start
+
+        blocks.forEach((block) => {
+            if (!block) {
+                return
+            }
+
+            if (block.type === "heading") {
+                cursor = insertStyledParagraph(cursor, block.tokens, "heading", block.level)
+                return
+            }
+
+            if (block.type === "paragraph") {
+                cursor = insertStyledParagraph(cursor, block.tokens, "paragraph")
+                return
+            }
+
+            if (block.type === "blockquote") {
+                cursor = insertStyledParagraph(cursor, block.tokens, "blockquote")
+                return
+            }
+
+            if (block.type === "list") {
+                cursor = insertStyledList(cursor, block)
+                return
+            }
+
+            if (block.type === "code") {
+                cursor = insertCodeBlock(cursor, block.text)
+                return
+            }
+
+            if (block.type === "hr") {
+                cursor = insertHorizontalRule(cursor)
+            }
+        })
+
+        return {
+            start,
+            end: cursor
+        }
+    }
+
+    function getIncrementalMarkdownFlushIndex(markdownText) {
+        const value = normalizeLineBreaks(markdownText || "")
+        if (!value) {
+            return 0
+        }
+
+        let index = 0
+        let lastFlushIndex = 0
+        let inCodeFence = false
+        let paragraphOpen = false
+
+        while (index < value.length) {
+            const lineEnd = value.indexOf("\n", index)
+            if (lineEnd === -1) {
+                break
+            }
+
+            const nextIndex = lineEnd + 1
+            const line = value.slice(index, nextIndex)
+            const trimmed = line.trim()
+
+            if (inCodeFence) {
+                if (/^```/.test(trimmed)) {
+                    inCodeFence = false
+                    lastFlushIndex = nextIndex
+                }
+                index = nextIndex
+                continue
+            }
+
+            if (/^```/.test(trimmed)) {
+                inCodeFence = true
+                paragraphOpen = false
+                index = nextIndex
+                continue
+            }
+
+            if (!trimmed) {
+                lastFlushIndex = nextIndex
+                paragraphOpen = false
+                index = nextIndex
+                continue
+            }
+
+            if (/^(#{1,6})\s+/.test(trimmed) || /^([-*_])(\s*\1){2,}\s*$/.test(trimmed) || /^>\s?/.test(trimmed) || /^(\s*)([-+*]|\d+\.)\s+/.test(line)) {
+                lastFlushIndex = nextIndex
+                paragraphOpen = false
+                index = nextIndex
+                continue
+            }
+
+            paragraphOpen = true
+            index = nextIndex
+        }
+
+        return lastFlushIndex
+    }
+
     function createDocumentTailWriter(promptText) {
+        return createRenderedDocumentTailWriter(promptText)
+    }
+
+    function createRenderedDocumentTailWriter(promptText) {
         const writer = {
             wroteContent: false,
             closed: false,
-            leadingContentPending: true,
-            trailingNewlines: 0
-        }
-
-        function compactDocumentText(text, options) {
-            const value = String(text || "").replace(/\r/g, "")
-            const settings = options || {}
-            let result = ""
-
-            for (const char of value) {
-                if (char === "\n") {
-                    if (settings.skipLeadingNewlines && writer.leadingContentPending && !writer.wroteContent) {
-                        continue
-                    }
-                    if (writer.trailingNewlines >= 2) {
-                        continue
-                    }
-                    result += "\n"
-                    writer.trailingNewlines += 1
-                    continue
-                }
-
-                result += char
-                writer.trailingNewlines = 0
-                writer.leadingContentPending = false
-            }
-
-            return result
+            markdownBuffer: "",
+            responseStart: 0,
+            responseEnd: 0
         }
 
         const compactPrompt = String(promptText || "")
@@ -1249,14 +1888,43 @@
 
         writeTextVisiblyAtDocumentEnd(`${headerPrefix}【AI 对话 ${formatNow()}】\n问题：${compactPrompt}\n回答：\n`)
 
+        const responseAnchor = getDocumentEndRangeSafe()
+        writer.responseStart = responseAnchor ? Number(responseAnchor.Start) : 0
+        writer.responseEnd = writer.responseStart
+
+        function renderMarkdownSegment(markdownSegment) {
+            const insertionRange = getDocumentRangeByPosition(writer.responseEnd, writer.responseEnd)
+            if (!insertionRange) {
+                throw new Error("无法获取实时写入区域。")
+            }
+            const rendered = renderMarkdownIntoRange(insertionRange, markdownSegment)
+            writer.responseEnd = rendered.end
+        }
+
+        function flushCompletedMarkdown(forceFlush) {
+            const flushIndex = forceFlush ? writer.markdownBuffer.length : getIncrementalMarkdownFlushIndex(writer.markdownBuffer)
+            if (!flushIndex) {
+                return
+            }
+
+            const readyMarkdown = writer.markdownBuffer.slice(0, flushIndex)
+            writer.markdownBuffer = writer.markdownBuffer.slice(flushIndex)
+            if (!readyMarkdown.trim()) {
+                return
+            }
+
+            renderMarkdownSegment(readyMarkdown)
+        }
+
         return {
             append(text) {
-                const value = compactDocumentText(text, { skipLeadingNewlines: true })
+                const value = String(text || "").replace(/\r/g, "")
                 if (!value || writer.closed) {
                     return
                 }
+                writer.markdownBuffer += value
                 writer.wroteContent = true
-                writeTextVisiblyAtDocumentEnd(value)
+                flushCompletedMarkdown(false)
             },
             flush() {
             },
@@ -1264,6 +1932,7 @@
                 if (writer.closed) {
                     return
                 }
+                flushCompletedMarkdown(true)
                 writeTextVisiblyAtDocumentEnd("\n——\n")
                 writer.closed = true
             },
@@ -1271,6 +1940,7 @@
                 if (writer.closed) {
                     return
                 }
+                flushCompletedMarkdown(true)
                 writeTextVisiblyAtDocumentEnd(`\n[输出中断：${message}]\n——\n`)
                 writer.closed = true
             },
@@ -1295,19 +1965,13 @@
 
         try {
             if (replaceSelection) {
-                range.Text = value
+                renderMarkdownIntoRange(range, value)
                 if (typeof range.Select === "function") {
                     range.Select()
                 }
-            } else if (window.Application.Selection && typeof window.Application.Selection.TypeText === "function") {
-                window.Application.Selection.TypeText(value)
-            } else if (typeof range.Collapse === "function") {
-                range.Collapse(false)
-                range.Text = value
-            } else if (typeof range.InsertAfter === "function") {
-                range.InsertAfter(value)
             } else {
-                range.Text = (range.Text || "") + value
+                const insertionRange = collapseRangeToEnd(range && range.Duplicate ? range.Duplicate : range)
+                renderMarkdownIntoRange(insertionRange, value)
             }
         } catch (error) {
             alert(`写入文档失败：${error.message || error}`)
