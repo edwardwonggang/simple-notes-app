@@ -4,9 +4,12 @@
         configSource: "",
         docName: "",
         selectionText: "",
+        selectionLines: null,
         useSelection: true,
         configPanelOpen: false,
         busy: false,
+        stopRequested: false,
+        activeRequestCancel: null,
         messages: [],
         lastReply: "",
         lastError: "",
@@ -15,6 +18,7 @@
 
     const STORAGE_CHAT_KEY = "wps_ai_sidebar_chat_v1"
     const MAX_AUTO_CONTINUES = 8
+    const SELECTION_POLL_MS = 700
 
     function $id(id) {
         return document.getElementById(id)
@@ -25,7 +29,9 @@
             id: `${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
             role,
             content: meta && meta.preserveWhitespace ? String(content || "") : normalizeText(content),
-            streaming: Boolean(meta && meta.streaming)
+            streaming: Boolean(meta && meta.streaming),
+            selectionChip: meta && meta.selectionChip ? String(meta.selectionChip) : "",
+            selectionLabel: meta && meta.selectionLabel ? String(meta.selectionLabel) : ""
         }
     }
 
@@ -79,6 +85,98 @@
             toggle.title = state.useSelection ? "附带选区：开" : "附带选区：关"
             toggle.setAttribute("aria-label", toggle.title)
         }
+    }
+
+    function normalizeSelectionLines(value) {
+        if (!value) {
+            return null
+        }
+
+        const startLine = Number(value.startLine)
+        const endLine = Number(value.endLine)
+        if (!Number.isFinite(startLine) || !Number.isFinite(endLine) || startLine <= 0 || endLine < startLine) {
+            return null
+        }
+
+        return {
+            startLine,
+            endLine
+        }
+    }
+
+    function getSelectionLineLabel(selectionLines) {
+        const range = normalizeSelectionLines(selectionLines)
+        if (!range) {
+            return ""
+        }
+
+        if (range.startLine === range.endLine) {
+            return `第 ${range.startLine} 行`
+        }
+
+        return `第 ${range.startLine} - ${range.endLine} 行`
+    }
+
+    function getSelectionChipText(docName, selectionLines) {
+        const range = normalizeSelectionLines(selectionLines)
+        if (!range) {
+            return ""
+        }
+
+        const rangeText = range.startLine === range.endLine
+            ? `${range.startLine}`
+            : `${range.startLine}-${range.endLine}`
+
+        return `(${rangeText})`
+    }
+
+    function getSelectionSnapshot() {
+        const doc = getActiveDocumentSafe()
+        return {
+            docName: doc && doc.Name ? doc.Name : "",
+            selectionText: getSelectedTextSafe(),
+            selectionLines: getSelectionLineRangeSafe()
+        }
+    }
+
+    function getSelectionSnapshotKey(snapshot) {
+        return JSON.stringify({
+            docName: snapshot && snapshot.docName || "",
+            selectionText: normalizeText(snapshot && snapshot.selectionText || ""),
+            selectionLines: normalizeSelectionLines(snapshot && snapshot.selectionLines)
+        })
+    }
+
+    function applySelectionSnapshot(snapshot) {
+        const nextSnapshot = snapshot || {
+            docName: "",
+            selectionText: "",
+            selectionLines: null
+        }
+        const nextKey = getSelectionSnapshotKey(nextSnapshot)
+        const currentKey = getSelectionSnapshotKey({
+            docName: state.docName,
+            selectionText: state.selectionText,
+            selectionLines: state.selectionLines
+        })
+
+        if (nextKey === currentKey) {
+            return false
+        }
+
+        const nextDocName = nextSnapshot.docName || ""
+        const nextSelectionText = normalizeText(nextSnapshot.selectionText || "")
+        const nextSelectionLines = normalizeSelectionLines(nextSnapshot.selectionLines)
+        const shouldPreserveExistingSelection = !nextSelectionText && Boolean(state.selectionText) && nextDocName === state.docName
+
+        state.docName = nextDocName
+        if (!shouldPreserveExistingSelection) {
+            state.selectionText = nextSelectionText
+            state.selectionLines = nextSelectionLines
+        }
+        setPluginStorageValue("wps_ai_last_selection", state.selectionText)
+        renderSelection()
+        return true
     }
 
     function setConfigStatus(text, isError) {
@@ -164,6 +262,7 @@
     function setBusy(busy) {
         state.busy = busy
         const sendBtn = $id("sendBtn")
+        const stopBtn = $id("stopBtn")
         const input = $id("promptInput")
         const refreshBtn = $id("refreshSelectionBtn")
         const useSelectionBtn = $id("useSelectionBtn")
@@ -171,6 +270,10 @@
         if (sendBtn) {
             sendBtn.disabled = busy
             sendBtn.textContent = busy ? "发送中…" : "发送"
+        }
+        if (stopBtn) {
+            stopBtn.classList.toggle("hidden", !busy)
+            stopBtn.disabled = !busy || !state.activeRequestCancel
         }
         if (input) {
             input.disabled = busy
@@ -185,11 +288,16 @@
             .forEach((button) => {
                 button.disabled = busy
             })
+
+        if (!busy) {
+            state.stopRequested = false
+            setActiveRequestCancel(null)
+        }
     }
 
     function getErrorText(text) {
         if (!text) {
-            return "空响应"
+            return "\u7a7a\u54cd\u5e94"
         }
 
         try {
@@ -330,9 +438,61 @@
         }
     }
 
-    async function requestStream(url, options, handlers) {
+    function createAbortError() {
+        const error = new Error("Request aborted")
+        error.name = "AbortError"
+        return error
+    }
+
+    function isAbortError(error) {
+        if (!error) {
+            return false
+        }
+
+        return error.name === "AbortError"
+            || /abort/i.test(String(error.message || ""))
+    }
+
+    function setActiveRequestCancel(cancelFn) {
+        state.activeRequestCancel = typeof cancelFn === "function" ? cancelFn : null
+        const stopBtn = $id("stopBtn")
+        if (stopBtn) {
+            stopBtn.disabled = !state.busy || !state.activeRequestCancel
+        }
+    }
+
+    function stopActiveRequest() {
+        if (!state.busy || !state.activeRequestCancel) {
+            return
+        }
+
+        state.stopRequested = true
+        const cancel = state.activeRequestCancel
+        setActiveRequestCancel(null)
+        setStatus("正在停止生成…", false)
+
         try {
-            const response = await fetch(url, options)
+            cancel()
+        } catch (_error) {
+        }
+    }
+
+    async function requestStream(url, options, handlers) {
+        const requestOptions = {
+            ...(options || {})
+        }
+        let controller = null
+
+        try {
+            if (typeof AbortController === "function" && !requestOptions.signal) {
+                controller = new AbortController()
+                requestOptions.signal = controller.signal
+            }
+            if (handlers && handlers.onRegisterCancel) {
+                handlers.onRegisterCancel(controller ? () => controller.abort() : null)
+            }
+
+            const response = await fetch(url, requestOptions)
             if (!response.ok) {
                 const text = await response.text()
                 throw new Error(`HTTP ${response.status}: ${getErrorText(text)}`)
@@ -360,11 +520,18 @@
                 finishReason: parser.finishReason
             }
         } catch (fetchError) {
+            if (isAbortError(fetchError) || (controller && controller.signal && controller.signal.aborted)) {
+                throw createAbortError()
+            }
             if (!(window.WpsInvoke && typeof window.WpsInvoke.CreateXHR === "function")) {
                 throw fetchError
             }
 
-            return await requestStreamByWpsXhr(url, options, handlers, fetchError)
+            return await requestStreamByWpsXhr(url, requestOptions, handlers, fetchError)
+        } finally {
+            if (handlers && handlers.onRegisterCancel) {
+                handlers.onRegisterCancel(null)
+            }
         }
     }
 
@@ -407,7 +574,7 @@
         })
 
         if (!config || !config.model || !config.proxyPath) {
-            throw new Error("未找到可用代理配置，请检查 config.local.json 并使用 npm run debug 启动插件")
+            throw new Error("\u672a\u627e\u5230\u53ef\u7528\u4ee3\u7406\u914d\u7f6e\uff0c\u8bf7\u68c0\u67e5 config.local.json \u5e76\u542f\u52a8\u672c\u5730\u8c03\u8bd5\u670d\u52a1")
         }
 
         state.config = {
@@ -420,8 +587,8 @@
             maxTokens: config.maxTokens ?? 8192,
             proxyPath: config.proxyPath
         }
-        state.configSource = "本地代理"
-        setStatus(`已连接：${state.configSource} · ${state.config.model}`, false)
+        state.configSource = "\u672c\u5730\u4ee3\u7406"
+        setStatus(`\u5df2\u8fde\u63a5\uff1a${state.configSource} \u00b7 ${state.config.model}`, false)
     }
 
     async function saveConfig() {
@@ -441,7 +608,7 @@
         }
 
         setBusy(true)
-        setConfigStatus("正在保存配置…", false)
+        setConfigStatus("\u6b63\u5728\u4fdd\u5b58\u914d\u7f6e\u2026", false)
 
         try {
             const config = await requestJson("/api/config", {
@@ -462,13 +629,13 @@
                 maxTokens: config.maxTokens ?? 8192,
                 proxyPath: config.proxyPath || "/api/chat"
             }
-            state.configSource = "本地代理"
-            setConfigStatus("配置已保存，下次打开会自动读取。", false)
-            setStatus(`配置已保存 · 当前模型：${state.config.model}`, false)
+            state.configSource = "\u672c\u5730\u4ee3\u7406"
+            setConfigStatus("\u914d\u7f6e\u5df2\u4fdd\u5b58\uff0c\u4e0b\u6b21\u6253\u5f00\u4f1a\u81ea\u52a8\u8bfb\u53d6\u3002", false)
+            setStatus(`\u914d\u7f6e\u5df2\u4fdd\u5b58 \u00b7 \u5f53\u524d\u6a21\u578b\uff1a${state.config.model}`, false)
             setConfigPanelOpen(false)
         } catch (error) {
-            setConfigStatus(`保存失败：${error.message || error}`, true)
-            setStatus(`配置保存失败：${error.message || error}`, true)
+            setConfigStatus(`\u4fdd\u5b58\u5931\u8d25\uff1a${error.message || error}`, true)
+            setStatus(`\u914d\u7f6e\u4fdd\u5b58\u5931\u8d25\uff1a${error.message || error}`, true)
         } finally {
             setBusy(false)
         }
@@ -478,6 +645,7 @@
         const doc = getActiveDocumentSafe()
         state.docName = doc && doc.Name ? doc.Name : ""
         state.selectionText = getSelectedTextSafe()
+        state.selectionLines = getSelectionLineRangeSafe()
         setPluginStorageValue("wps_ai_last_selection", state.selectionText)
         renderSelection()
 
@@ -501,6 +669,32 @@
         }
     }
 
+    function readCurrentSelection(options) {
+        const settings = options || {}
+        const changed = applySelectionSnapshot(getSelectionSnapshot())
+
+        if (settings.silentStatus) {
+            return changed
+        }
+
+        if (state.selectionText) {
+            setStatus(changed ? "\u5df2\u540c\u6b65\u5f53\u524d\u9009\u533a\u3002" : "\u5df2\u8bfb\u53d6\u5f53\u524d\u9009\u533a\u3002", false)
+        } else {
+            setStatus("\u672a\u8bfb\u53d6\u5230\u9009\u533a\uff0c\u53ef\u76f4\u63a5\u81ea\u7531\u63d0\u95ee\u3002", false)
+        }
+
+        return changed
+    }
+
+    function startSelectionAutoSync() {
+        window.setInterval(() => {
+            if (state.configPanelOpen) {
+                return
+            }
+            readCurrentSelection({ silentStatus: true })
+        }, SELECTION_POLL_MS)
+    }
+
     function clearPendingActionFromStorage() {
         setPluginStorageValue("wps_ai_pending_action", "")
     }
@@ -513,13 +707,14 @@
 
         const messages = [{
             role: "system",
-            content: "你是 WPS 文档中的中文写作助手。默认用简洁、专业的中文回答。如果用户要求改写、润色、翻译或生成文稿，在没有额外说明时只输出最终结果，不要附带解释。"
+            content: "\u4f60\u662f WPS \u6587\u6863\u4e2d\u7684\u4e2d\u6587\u5199\u4f5c\u52a9\u624b\u3002\u9ed8\u8ba4\u7528\u7b80\u6d01\u3001\u4e13\u4e1a\u7684\u4e2d\u6587\u56de\u7b54\u3002\u5982\u679c\u7528\u6237\u8981\u6c42\u6539\u5199\u3001\u6da6\u8272\u3001\u7ffb\u8bd1\u6216\u751f\u6210\u6587\u7a3f\uff0c\u5728\u6ca1\u6709\u989d\u5916\u8bf4\u660e\u65f6\u53ea\u8f93\u51fa\u6700\u7ec8\u7ed3\u679c\uff0c\u4e0d\u9644\u5e26\u89e3\u91ca\u3002"
         }]
 
         if (state.useSelection && state.selectionText) {
+            const selectionLabel = getSelectionLineLabel(state.selectionLines)
             messages.push({
                 role: "system",
-                content: `当前用户在 WPS 中选中的文本如下，可作为上下文参考：\n${state.selectionText}`
+                content: `${selectionLabel ? `\u5f53\u524d\u7528\u6237\u5728 WPS \u4e2d\u9009\u4e2d\u4e86 ${selectionLabel} \u7684\u5185\u5bb9\uff0c\u53ef\u4f5c\u4e3a\u4e0a\u4e0b\u6587\u53c2\u8003\uff1a\n` : "\u5f53\u524d\u7528\u6237\u5728 WPS \u4e2d\u9009\u4e2d\u7684\u6587\u672c\u5982\u4e0b\uff0c\u53ef\u4f5c\u4e3a\u4e0a\u4e0b\u6587\u53c2\u8003\uff1a\n"}${state.selectionText}`
             })
         }
 
@@ -558,7 +753,7 @@
     async function callNvidiaChatStream(promptText, handlers) {
         const config = state.config
         if (!config) {
-            throw new Error("配置未加载完成")
+            throw new Error("????????")
         }
 
         const payload = {
@@ -619,6 +814,15 @@
                 const parser = createStreamParser(handlers)
                 let lastLength = 0
 
+                if (handlers && handlers.onRegisterCancel) {
+                    handlers.onRegisterCancel(() => {
+                        try {
+                            xhr.abort()
+                        } catch (_error) {
+                        }
+                    })
+                }
+
                 xhr.open(method, url)
                 Object.keys(headers).forEach((key) => xhr.setRequestHeader(key, headers[key]))
                 xhr.onprogress = function () {
@@ -646,10 +850,21 @@
                         })
                         return
                     }
+                    if (xhr.status === 0 && state.stopRequested) {
+                        reject(createAbortError())
+                        return
+                    }
                     reject(new Error(`XHR ${xhr.status}: ${getErrorText(xhr.responseText || fetchError.message)}`))
                 }
                 xhr.onerror = function () {
+                    if (state.stopRequested) {
+                        reject(createAbortError())
+                        return
+                    }
                     reject(fetchError)
+                }
+                xhr.onabort = function () {
+                    reject(createAbortError())
                 }
                 xhr.send(options && options.body || null)
             } catch (xhrError) {
@@ -687,8 +902,9 @@
         }
         if (typeof action.selectionText === "string") {
             state.selectionText = normalizeText(action.selectionText)
-            renderSelection()
         }
+        state.selectionLines = normalizeSelectionLines(action.selectionLines)
+        renderSelection()
 
         if (action.requiresSelection && !state.selectionText) {
             setStatus("该快捷动作需要先选中文本。", true)
@@ -723,27 +939,43 @@
             return
         }
 
-        readCurrentSelection()
+        readCurrentSelection({ silentStatus: true })
 
-        const userMessage = createMessage("user", normalizedPrompt)
+        const userMessage = createMessage("user", normalizedPrompt, {
+            selectionChip: state.useSelection && state.selectionText
+                ? getSelectionChipText(state.docName, state.selectionLines)
+                : "",
+            selectionLabel: state.useSelection && state.selectionText
+                ? getSelectionLineLabel(state.selectionLines)
+                : ""
+        })
         renderMessages()
         setBusy(true)
         setStatus("正在请求 AI…", false)
+        state.stopRequested = false
+        setActiveRequestCancel(null)
 
         let documentWriter = null
+        let assistantText = ""
+        let currentSegmentText = ""
+        let promptToSend = normalizedPrompt
+        let continueCount = 0
+        let streamResult = null
+
         try {
             documentWriter = createDocumentTailWriter(normalizedPrompt)
-            let assistantText = ""
-            let promptToSend = normalizedPrompt
-            let continueCount = 0
-            let streamResult = null
 
             do {
+                currentSegmentText = ""
                 streamResult = await callNvidiaChatStream(promptToSend, {
+                    onRegisterCancel(cancelFn) {
+                        setActiveRequestCancel(cancelFn)
+                    },
                     onThinking() {
                         setStatus("模型思考中…", false)
                     },
-                    onDelta(_fullText, contentPart) {
+                    onDelta(fullText, contentPart) {
+                        currentSegmentText = fullText || currentSegmentText
                         if (documentWriter) {
                             documentWriter.append(contentPart)
                         }
@@ -751,7 +983,8 @@
                     }
                 })
 
-                assistantText = mergeContinuationText(assistantText, streamResult && streamResult.text || "")
+                setActiveRequestCancel(null)
+                assistantText = mergeContinuationText(assistantText, streamResult && streamResult.text || currentSegmentText || "")
 
                 if (!(streamResult && streamResult.finishReason === "length")) {
                     break
@@ -801,18 +1034,45 @@
             }
             $id("promptInput").value = ""
         } catch (error) {
-            if (documentWriter) {
-                try {
-                    documentWriter.fail(error.message || String(error))
-                } catch (_writerError) {
+            const aborted = state.stopRequested || isAbortError(error)
+            const partialText = normalizeText(mergeContinuationText(assistantText, currentSegmentText))
+
+            if (aborted) {
+                if (documentWriter) {
+                    try {
+                        if (documentWriter.hasContent()) {
+                            documentWriter.finish()
+                        } else {
+                            documentWriter.fail("已手动停止")
+                        }
+                    } catch (_writerError) {
+                    }
                 }
+
+                state.messages.push(userMessage)
+                if (partialText) {
+                    state.messages.push(createMessage("assistant", partialText))
+                    state.lastReply = partialText
+                    setPluginStorageValue("wps_ai_last_reply", partialText)
+                }
+                renderMessages()
+                saveState()
+                setStatus(partialText ? "已手动停止，保留已生成内容。" : "已手动停止。", false)
+                $id("promptInput").value = ""
+            } else {
+                if (documentWriter) {
+                    try {
+                        documentWriter.fail(error.message || String(error))
+                    } catch (_writerError) {
+                    }
+                }
+                state.lastError = error.message || String(error)
+                state.messages.push(userMessage)
+                saveState()
+                renderMessages()
+                setStatus(`请求失败：${state.lastError}`, true)
+                alert(`AI 请求失败：${state.lastError}`)
             }
-            state.lastError = error.message || String(error)
-            state.messages.push(userMessage)
-            saveState()
-            renderMessages()
-            setStatus(`请求失败：${state.lastError}`, true)
-            alert(`AI 请求失败：${state.lastError}`)
         } finally {
             setBusy(false)
             if (state.pendingRibbonAction) {
@@ -1070,6 +1330,7 @@
         bindIfPresent("closeConfigBtn", "click", () => setConfigPanelOpen(false))
         bindIfPresent("cancelConfigBtn", "click", () => setConfigPanelOpen(false))
         bindIfPresent("sendBtn", "click", () => submitPrompt($id("promptInput").value))
+        bindIfPresent("stopBtn", "click", () => stopActiveRequest())
 
         $id("promptInput").addEventListener("keydown", (event) => {
             if (event.isComposing) {
@@ -1116,6 +1377,7 @@
             }
             state.selectionText = normalizeText(event.data.payload && event.data.payload.text || "")
             state.docName = event.data.payload && event.data.payload.docName || state.docName
+            state.selectionLines = normalizeSelectionLines(event.data.payload && event.data.payload.selectionLines)
             renderSelection()
         })
     }
@@ -1132,6 +1394,7 @@
                     if (payload.kind === "selection-updated") {
                         state.selectionText = normalizeText(payload.payload && payload.payload.text || "")
                         state.docName = payload.payload && payload.payload.docName || ""
+                        state.selectionLines = normalizeSelectionLines(payload.payload && payload.payload.selectionLines)
                         renderSelection()
                     }
                     if (payload.kind === "document-updated") {
@@ -1158,6 +1421,7 @@
         renderMessages()
         renderSelection()
         bindUi()
+        startSelectionAutoSync()
         await loadOptionalDebugSdk()
         registerWebNotifyBridge()
         await loadConfig()

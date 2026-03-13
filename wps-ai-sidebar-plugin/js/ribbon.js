@@ -151,11 +151,13 @@ function copyLastReply() {
 
 function refreshSelectionSnapshot() {
     const selectedText = getSelectedTextSafe()
+    const selectionLines = getSelectionLineRangeSafe()
     setPluginStorageValue("wps_ai_last_selection", selectedText)
     ensureTaskPaneVisible()
     notifyTaskPane("selection-updated", {
         text: selectedText,
-        docName: getActiveDocumentSafe() ? getActiveDocumentSafe().Name : ""
+        docName: getActiveDocumentSafe() ? getActiveDocumentSafe().Name : "",
+        selectionLines
     })
 }
 
@@ -166,19 +168,22 @@ function triggerQuickAction(controlId) {
     }
 
     const selectedText = getSelectedTextSafe()
+    const selectionLines = getSelectionLineRangeSafe()
     const docName = getActiveDocumentSafe() ? getActiveDocumentSafe().Name : ""
 
     setPluginStorageValue("wps_ai_last_selection", selectedText)
     setPluginStorageValue("wps_ai_pending_action", JSON.stringify({
         ...action,
         docName,
-        selectionText: selectedText
+        selectionText: selectedText,
+        selectionLines
     }))
 
     ensureTaskPaneVisible()
     notifyTaskPane("selection-updated", {
         text: selectedText,
-        docName
+        docName,
+        selectionLines
     })
 
     if (action.requiresSelection && !selectedText) {
@@ -189,7 +194,8 @@ function triggerQuickAction(controlId) {
     notifyTaskPane("quick-action", {
         ...action,
         docName,
-        selectionText: selectedText
+        selectionText: selectedText,
+        selectionLines
     })
 }
 

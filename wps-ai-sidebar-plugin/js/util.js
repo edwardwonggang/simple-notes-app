@@ -71,6 +71,54 @@ function getSelectedTextSafe() {
     return normalizeText(range.Text || "")
 }
 
+function normalizeLineBreaks(value) {
+    return String(value || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n")
+}
+
+function getSelectionLineRangeSafe() {
+    const range = getSelectionRangeSafe()
+    if (!range) {
+        return null
+    }
+
+    try {
+        if (typeof range.Information === "function") {
+            const startLine = Number(range.Information(10))
+            const endLine = Number(range.Information(11))
+            if (Number.isFinite(startLine) && startLine > 0 && Number.isFinite(endLine) && endLine >= startLine) {
+                return {
+                    startLine,
+                    endLine
+                }
+            }
+        }
+    } catch (_error) {
+    }
+
+    try {
+        const doc = getActiveDocumentSafe()
+        const start = Number(range.Start)
+        const end = Number(range.End)
+        if (!doc || typeof doc.Range !== "function" || !Number.isFinite(start) || !Number.isFinite(end)) {
+            return null
+        }
+
+        const beforeRange = doc.Range(0, start)
+        const beforeText = normalizeLineBreaks(beforeRange && beforeRange.Text || "")
+        const selectedText = normalizeLineBreaks(range.Text || "")
+        const startLine = beforeText ? beforeText.split("\n").length : 1
+        const trimmedSelection = selectedText.replace(/\n+$/, "")
+        const selectedLineCount = trimmedSelection ? trimmedSelection.split("\n").length : 1
+
+        return {
+            startLine,
+            endLine: startLine + selectedLineCount - 1
+        }
+    } catch (_error) {
+        return null
+    }
+}
+
 function notifyTaskPane(kind, payload) {
     try {
         if (window.Application && window.Application.OAAssist) {
