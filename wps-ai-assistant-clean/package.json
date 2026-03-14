@@ -1,0 +1,26 @@
+{
+  "name": "wps-ai-assistant-clean",
+  "version": "1.0.0",
+  "private": true,
+  "description": "全新实现的 WPS AI 对话插件",
+  "addonType": "wps",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 3893",
+    "build": "node scripts/build-static.mjs",
+    "preview": "vite preview --host 127.0.0.1 --port 3893",
+    "debug": "wpsjs debug",
+    "debug:server": "wpsjs debug -s -p 32123",
+    "windows:register": "node scripts/windows-register.mjs",
+    "windows:unregister": "node scripts/windows-unregister.mjs",
+    "windows:dev": "node scripts/windows-register.mjs && vite --host 127.0.0.1 --port 3893",
+    "smoke:api": "node scripts/smoke-test.mjs",
+    "test": "npm run build && npm run smoke:api"
+  },
+  "devDependencies": {
+    "undici": "^6.23.0",
+    "vite": "^5.4.21",
+    "wps-jsapi-declare": "latest",
+    "wpsjs": "latest"
+  }
+}
+

@@ -1,0 +1,20 @@
+<customUI xmlns="http://schemas.microsoft.com/office/2006/01/customui" onLoad="OnAddinLoad">
+  <ribbon startFromScratch="false">
+    <tabs>
+      <tab id="wpsAiAssistantTab" label="AI 助手">
+        <group id="wpsAiAssistantMainGroup" label="侧栏">
+          <button id="btnToggleSidebar" label="打开侧栏" onAction="OnAction" getImage="GetImage" visible="true" size="large"/>
+          <button id="btnRefreshSelection" label="同步选区" onAction="OnAction" getImage="GetImage" visible="true" size="large"/>
+          <button id="btnCopyLastReply" label="复制回复" onAction="OnAction" getImage="GetImage" visible="true" size="large"/>
+        </group>
+        <group id="wpsAiAssistantInsertGroup" label="写回">
+          <button id="btnInsertLastReply" label="插入回复" onAction="OnAction" getImage="GetImage" visible="true" size="large"/>
+          <button id="btnReplaceSelection" label="替换选区" onAction="OnAction" getImage="GetImage" visible="true" size="large"/>
+        </group>
+        <group id="wpsAiAssistantDebugGroup" label="调试">
+          <button id="btnOpenInputDebugPane" label="输入调试" onAction="OnAction" getImage="GetImage" visible="true" size="large"/>
+        </group>
+      </tab>
+    </tabs>
+  </ribbon>
+</customUI>

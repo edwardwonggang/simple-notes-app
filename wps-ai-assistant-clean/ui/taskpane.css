@@ -1,0 +1,247 @@
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color-scheme: light;
+  --bg: #f5f7fb;
+  --panel: #fff;
+  --text: #162033;
+  --muted: #5f6b84;
+  --line: #dbe3f0;
+  --primary: #3e6cff;
+  --primary-strong: #2b58ea;
+  --danger: #d9485f;
+  --shadow: 0 10px 30px rgba(18, 34, 67, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+}
+
+body {
+  overflow: hidden;
+}
+
+button, input, textarea {
+  font: inherit;
+}
+
+.shell {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+}
+
+.header,
+.selection-card,
+.composer,
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.header p,
+#selectionMeta,
+#statusText,
+.config-status,
+.panel-header p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.selection-card {
+  padding: 12px 14px;
+}
+
+.composer {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 14px;
+}
+
+.composer textarea {
+  flex: 1;
+  width: 100%;
+  min-height: 220px;
+  resize: none;
+  border: 0;
+  outline: none;
+  background: transparent;
+  line-height: 1.6;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.actions,
+.config-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.primary,
+.ghost,
+.icon-btn {
+  border: 0;
+  cursor: pointer;
+  transition: background-color .16s ease;
+}
+
+.primary {
+  padding: 10px 16px;
+  border-radius: 12px;
+  background: var(--primary);
+  color: #fff;
+  font-weight: 600;
+}
+
+.primary:hover {
+  background: var(--primary-strong);
+}
+
+.ghost {
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: #eef2fb;
+  color: var(--text);
+}
+
+.ghost:hover,
+.icon-btn:hover {
+  background: #e4ebfb;
+}
+
+.icon-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: #eef2fb;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon-btn.small {
+  width: 34px;
+  height: 34px;
+}
+
+.icon-btn svg {
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  z-index: 30;
+}
+
+.backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(9, 18, 33, 0.28);
+}
+
+.panel {
+  position: relative;
+  width: min(100%, 520px);
+  max-height: 100%;
+  overflow: auto;
+  padding: 16px;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.panel-header h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.config-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.field input {
+  width: 100%;
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  outline: none;
+}
+
+.check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.is-error {
+  color: var(--danger);
+}
+

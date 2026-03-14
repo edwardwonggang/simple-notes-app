@@ -1,6 +1,0 @@
-node_modules
-dist
-.debugTemp
-.inspect-wpsjs
-config.local.json
-*.log

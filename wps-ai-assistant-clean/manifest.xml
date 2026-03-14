@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<JsPlugin>
+  <ApiVersion>1.0.0</ApiVersion>
+  <Name>WpsAiAssistantClean</Name>
+  <Description>WPS AI 对话助手</Description>
+</JsPlugin>
+
