@@ -1,198 +1,218 @@
-const { app, BrowserWindow, ipcMain, clipboard, screen } = require('electron');
-const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
+const { spawn } = require('child_process');
+const { app, BrowserWindow, ipcMain, screen } = require('electron');
 
-let mainWindow;
-let saveStateTimer = null;
-let snapTimer = null;
+const {
+  MIN_WIDTH,
+  MIN_HEIGHT,
+  loadWindowBounds,
+  saveWindowBounds
+} = require('./src/main/window-state');
+const { loadConfig, saveConfig, normalizeConfig } = require('./src/main/config-store');
+const { streamChatCompletion } = require('./src/main/chat-service');
+const {
+  initDocuments,
+  openDocument,
+  saveDocument,
+  deleteDocument,
+  createDocument
+} = require('./src/main/document-store');
 
-const DEFAULT_WIDTH = 520;
-const DEFAULT_HEIGHT = 460;
-const MIN_WIDTH = 420;
-const MIN_HEIGHT = 320;
-const SNAP_THRESHOLD = 18;
-const WINDOW_STATE_FILE = 'window-state.json';
+let mainWindow = null;
+let saveBoundsTimer = null;
+const activeRequests = new Map();
+const HOMEBREW_PREFIX = '/opt/homebrew';
+const OPENJDK_BIN = path.join(HOMEBREW_PREFIX, 'opt/openjdk/bin/java');
+const GRAPHVIZ_DOT = path.join(HOMEBREW_PREFIX, 'bin/dot');
+const LOCAL_PLANTUML_JAR = path.join(__dirname, 'src', 'vendor', 'plantuml.jar');
 
-function getWindowStatePath() {
-  return path.join(app.getPath('userData'), WINDOW_STATE_FILE);
-}
+function createWindow() {
+  const bounds = loadWindowBounds(app, screen);
 
-function hasIntersection(a, b) {
-  return !(
-    a.x + a.width <= b.x ||
-    b.x + b.width <= a.x ||
-    a.y + a.height <= b.y ||
-    b.y + b.height <= a.y
-  );
-}
-
-function getDefaultBounds() {
-  const workArea = screen.getPrimaryDisplay().workArea;
-  const width = Math.min(DEFAULT_WIDTH, workArea.width);
-  const height = Math.min(DEFAULT_HEIGHT, workArea.height);
-  return {
-    width,
-    height,
-    x: Math.round(workArea.x + (workArea.width - width) / 2),
-    y: Math.round(workArea.y + (workArea.height - height) / 2)
-  };
-}
-
-function sanitizeSavedBounds(savedBounds) {
-  if (!savedBounds || typeof savedBounds !== 'object') {
-    return null;
-  }
-
-  const { x, y, width, height } = savedBounds;
-  if (
-    !Number.isFinite(x) ||
-    !Number.isFinite(y) ||
-    !Number.isFinite(width) ||
-    !Number.isFinite(height)
-  ) {
-    return null;
-  }
-
-  const cleanBounds = {
-    x: Math.round(x),
-    y: Math.round(y),
-    width: Math.max(MIN_WIDTH, Math.round(width)),
-    height: Math.max(MIN_HEIGHT, Math.round(height))
-  };
-
-  const displays = screen.getAllDisplays();
-  const visible = displays.some((display) => hasIntersection(cleanBounds, display.workArea));
-  return visible ? cleanBounds : null;
-}
-
-function loadWindowBounds() {
-  try {
-    const statePath = getWindowStatePath();
-    if (!fs.existsSync(statePath)) {
-      return getDefaultBounds();
-    }
-
-    const content = fs.readFileSync(statePath, 'utf8');
-    const parsed = JSON.parse(content);
-    return sanitizeSavedBounds(parsed) || getDefaultBounds();
-  } catch (_error) {
-    return getDefaultBounds();
-  }
-}
-
-function writeWindowBounds() {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    return;
-  }
-  if (mainWindow.isMinimized() || mainWindow.isMaximized() || mainWindow.isFullScreen()) {
-    return;
-  }
-
-  const bounds = mainWindow.getBounds();
-  const statePath = getWindowStatePath();
-  const payload = {
+  mainWindow = new BrowserWindow({
     x: bounds.x,
     y: bounds.y,
     width: bounds.width,
-    height: bounds.height
-  };
-
-  try {
-    fs.mkdirSync(path.dirname(statePath), { recursive: true });
-    fs.writeFileSync(statePath, JSON.stringify(payload, null, 2), 'utf8');
-  } catch (_error) {
-    // Ignore persistence failures to avoid impacting app behavior.
-  }
-}
-
-function scheduleWindowStateSave() {
-  if (saveStateTimer) {
-    clearTimeout(saveStateTimer);
-  }
-  saveStateTimer = setTimeout(() => {
-    writeWindowBounds();
-    saveStateTimer = null;
-  }, 180);
-}
-
-function applySnapIfNeeded() {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    return;
-  }
-  if (mainWindow.isMinimized() || mainWindow.isMaximized() || mainWindow.isFullScreen()) {
-    return;
-  }
-
-  const bounds = mainWindow.getBounds();
-  const workArea = screen.getDisplayMatching(bounds).workArea;
-  let nextX = bounds.x;
-  let nextY = bounds.y;
-
-  if (Math.abs(bounds.x - workArea.x) <= SNAP_THRESHOLD) {
-    nextX = workArea.x;
-  }
-  if (Math.abs(bounds.y - workArea.y) <= SNAP_THRESHOLD) {
-    nextY = workArea.y;
-  }
-
-  const rightEdge = bounds.x + bounds.width;
-  const bottomEdge = bounds.y + bounds.height;
-  const workAreaRight = workArea.x + workArea.width;
-  const workAreaBottom = workArea.y + workArea.height;
-
-  if (Math.abs(rightEdge - workAreaRight) <= SNAP_THRESHOLD) {
-    nextX = workAreaRight - bounds.width;
-  }
-  if (Math.abs(bottomEdge - workAreaBottom) <= SNAP_THRESHOLD) {
-    nextY = workAreaBottom - bounds.height;
-  }
-
-  if (nextX !== bounds.x || nextY !== bounds.y) {
-    mainWindow.setBounds({
-      x: nextX,
-      y: nextY,
-      width: bounds.width,
-      height: bounds.height
-    });
-  }
-}
-
-function scheduleSnap() {
-  if (snapTimer) {
-    clearTimeout(snapTimer);
-  }
-  snapTimer = setTimeout(() => {
-    applySnapIfNeeded();
-    scheduleWindowStateSave();
-    snapTimer = null;
-  }, 80);
-}
-
-function createWindow() {
-  const savedBounds = loadWindowBounds();
-  mainWindow = new BrowserWindow({
-    x: savedBounds.x,
-    y: savedBounds.y,
-    width: savedBounds.width,
-    height: savedBounds.height,
+    height: bounds.height,
     minWidth: MIN_WIDTH,
     minHeight: MIN_HEIGHT,
-    title: '酷炫桌面小工具',
-    backgroundColor: '#0f111a',
+    title: 'AI Markdown Client',
+    backgroundColor: '#0f172a',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      sandbox: false
     }
   });
 
   mainWindow.loadFile('index.html');
-  mainWindow.on('move', () => {
-    scheduleSnap();
-    scheduleWindowStateSave();
+  mainWindow.on('resize', scheduleBoundsSave);
+  mainWindow.on('move', scheduleBoundsSave);
+  mainWindow.on('close', () => {
+    flushBoundsSave();
+    abortRequest(mainWindow.webContents.id);
   });
-  mainWindow.on('resize', scheduleWindowStateSave);
-  mainWindow.on('close', writeWindowBounds);
+}
+
+function scheduleBoundsSave() {
+  if (saveBoundsTimer) {
+    clearTimeout(saveBoundsTimer);
+  }
+
+  saveBoundsTimer = setTimeout(() => {
+    flushBoundsSave();
+  }, 180);
+}
+
+function flushBoundsSave() {
+  if (saveBoundsTimer) {
+    clearTimeout(saveBoundsTimer);
+    saveBoundsTimer = null;
+  }
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    saveWindowBounds(app, mainWindow);
+  }
+}
+
+function sendChatEvent(webContents, payload) {
+  if (!webContents || webContents.isDestroyed()) {
+    return;
+  }
+  webContents.send('chat:event', payload);
+}
+
+function renderPlantUmlLocally(source) {
+  return new Promise((resolve, reject) => {
+    const javaBin = OPENJDK_BIN;
+    const javaArgs = [
+      '-Djava.awt.headless=true',
+      '-jar',
+      LOCAL_PLANTUML_JAR,
+      '-charset',
+      'UTF-8',
+      '-tsvg',
+      '-pipe'
+    ];
+
+    if (GRAPHVIZ_DOT) {
+      javaArgs.push('-graphvizdot', GRAPHVIZ_DOT);
+    }
+
+    const child = spawn(javaBin, javaArgs, {
+      env: {
+        ...process.env,
+        PATH: `${path.join(HOMEBREW_PREFIX, 'opt/openjdk/bin')}:${path.join(HOMEBREW_PREFIX, 'bin')}:${process.env.PATH || ''}`
+      }
+    });
+
+    const stdoutChunks = [];
+    const stderrChunks = [];
+
+    child.stdout.on('data', (chunk) => stdoutChunks.push(chunk));
+    child.stderr.on('data', (chunk) => stderrChunks.push(chunk));
+    child.on('error', (error) => {
+      reject(new Error(`本地 PlantUML 启动失败：${error.message}`));
+    });
+    child.on('close', (code) => {
+      const output = Buffer.concat(stdoutChunks).toString('utf8').trim();
+      const errorText = Buffer.concat(stderrChunks).toString('utf8').trim();
+
+      if (code === 0 && output) {
+        resolve(output);
+        return;
+      }
+
+      reject(new Error(errorText || output || `本地 PlantUML 渲染失败（退出码 ${code}）`));
+    });
+
+    child.stdin.write(String(source || ''));
+    child.stdin.end();
+  });
+}
+
+function abortRequest(webContentsId) {
+  const current = activeRequests.get(webContentsId);
+  if (!current) {
+    return false;
+  }
+
+  current.controller.abort();
+  activeRequests.delete(webContentsId);
+  return true;
+}
+
+function buildApiMessages(messages, systemPrompt) {
+  const result = [];
+
+  if (systemPrompt && systemPrompt.trim()) {
+    result.push({
+      role: 'system',
+      content: systemPrompt.trim()
+    });
+  }
+
+  messages.forEach((message) => {
+    const role = message?.role === 'assistant' ? 'assistant' : 'user';
+    const content = String(message?.content ?? '');
+    if (!content.trim()) {
+      return;
+    }
+    result.push({ role, content });
+  });
+
+  return result;
+}
+
+async function startChat(webContents, payload) {
+  const webContentsId = webContents.id;
+  abortRequest(webContentsId);
+
+  const requestId = crypto.randomUUID();
+  const controller = new AbortController();
+  const config = normalizeConfig(payload?.config || {});
+  const messages = buildApiMessages(payload?.messages || [], config.systemPrompt);
+
+  activeRequests.set(webContentsId, {
+    requestId,
+    controller
+  });
+
+  sendChatEvent(webContents, {
+    type: 'started',
+    requestId
+  });
+
+  try {
+    await streamChatCompletion(config, messages, controller.signal, (chunk) => {
+      sendChatEvent(webContents, {
+        type: 'chunk',
+        requestId,
+        chunk
+      });
+    });
+
+    sendChatEvent(webContents, {
+      type: 'done',
+      requestId
+    });
+  } catch (error) {
+    const aborted = controller.signal.aborted;
+    sendChatEvent(webContents, {
+      type: aborted ? 'aborted' : 'error',
+      requestId,
+      message: aborted ? '已停止生成。' : error.message
+    });
+  } finally {
+    const current = activeRequests.get(webContentsId);
+    if (current?.requestId === requestId) {
+      activeRequests.delete(webContentsId);
+    }
+  }
+
+  return { requestId };
 }
 
 app.whenReady().then(() => {
@@ -211,17 +231,16 @@ app.on('window-all-closed', () => {
   }
 });
 
-ipcMain.handle('window:set-always-on-top', (_event, value) => {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    return false;
-  }
-  mainWindow.setAlwaysOnTop(Boolean(value), 'screen-saver');
-  return mainWindow.isAlwaysOnTop();
+ipcMain.handle('config:load', () => loadConfig(app));
+ipcMain.handle('config:save', (_event, nextConfig) => saveConfig(app, nextConfig));
+ipcMain.handle('docs:init', () => initDocuments(app));
+ipcMain.handle('docs:open', (_event, id) => openDocument(app, id));
+ipcMain.handle('docs:create', (_event, payload) => createDocument(app, payload));
+ipcMain.handle('docs:save', (_event, payload) => saveDocument(app, payload));
+ipcMain.handle('docs:delete', (_event, id) => deleteDocument(app, id));
+ipcMain.handle('chat:start', (event, payload) => startChat(event.sender, payload));
+ipcMain.handle('chat:stop', (event) => {
+  abortRequest(event.sender.id);
+  return { stopped: true };
 });
-
-ipcMain.handle('clipboard:write-text', (_event, text) => {
-  clipboard.writeText(text || '');
-  return true;
-});
-
-ipcMain.handle('clipboard:read-text', () => clipboard.readText());
+ipcMain.handle('diagram:render-plantuml', (_event, source) => renderPlantUmlLocally(source));

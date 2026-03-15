@@ -1,7 +1,7 @@
 {
-  "name": "cool-desktop-widget",
+  "name": "ai-markdown-client",
   "version": "1.0.0",
-  "description": "Cross-platform desktop widget for Mac and Windows",
+  "description": "Cross-platform AI markdown client for Mac and Windows",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -9,20 +9,30 @@
     "dist:mac": "electron-builder --mac dmg",
     "dist:win": "electron-builder --win nsis"
   },
+  "dependencies": {
+    "dompurify": "^3.3.3",
+    "highlight.js": "^11.11.1",
+    "markdown-it": "^14.1.0",
+    "mermaid": "^11.13.0",
+    "node-plantuml": "^0.9.0",
+    "plantuml-encoder": "^1.4.0",
+    "undici": "^7.16.0"
+  },
   "devDependencies": {
     "electron": "^31.0.2",
     "electron-builder": "^24.13.3"
   },
   "build": {
-    "appId": "com.edward.cooldesktopwidget",
-    "productName": "CoolDesktopWidget",
+    "appId": "com.edward.aimarkdownclient",
+    "productName": "AIMarkdownClient",
     "files": [
       "main.js",
       "preload.js",
       "renderer.js",
       "index.html",
       "styles.css",
-      "package.json"
+      "package.json",
+      "src/**/*"
     ],
     "asar": true,
     "directories": {
