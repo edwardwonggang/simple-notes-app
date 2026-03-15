@@ -1,3 +1,4 @@
+const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
@@ -22,10 +23,177 @@ const {
 let mainWindow = null;
 let saveBoundsTimer = null;
 const activeRequests = new Map();
-const HOMEBREW_PREFIX = '/opt/homebrew';
-const OPENJDK_BIN = path.join(HOMEBREW_PREFIX, 'opt/openjdk/bin/java');
-const GRAPHVIZ_DOT = path.join(HOMEBREW_PREFIX, 'bin/dot');
-const LOCAL_PLANTUML_JAR = path.join(__dirname, 'src', 'vendor', 'plantuml.jar');
+let plantUmlRuntimeCache = null;
+
+function getExecutableName(baseName) {
+  return process.platform === 'win32' ? `${baseName}.exe` : baseName;
+}
+
+function canReadFile(filePath) {
+  if (!filePath) {
+    return false;
+  }
+
+  try {
+    return fs.statSync(filePath).isFile();
+  } catch (_error) {
+    return false;
+  }
+}
+
+function uniquePaths(paths) {
+  return Array.from(new Set(paths.filter(Boolean)));
+}
+
+function getPathEntries() {
+  return String(process.env.PATH || '')
+    .split(path.delimiter)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function findExecutableInPath(baseName) {
+  const pathEntries = getPathEntries();
+  const executableNames = process.platform === 'win32'
+    ? Array.from(new Set([
+      `${baseName}.exe`,
+      ...String(process.env.PATHEXT || '.EXE;.CMD;.BAT;.COM')
+        .split(';')
+        .filter(Boolean)
+        .map((extension) => `${baseName}${extension.toLowerCase()}`)
+    ]))
+    : [baseName];
+
+  for (const entry of pathEntries) {
+    for (const executableName of executableNames) {
+      const fullPath = path.join(entry, executableName);
+      if (canReadFile(fullPath)) {
+        return fullPath;
+      }
+    }
+  }
+
+  return '';
+}
+
+function listChildDirectories(baseDir) {
+  try {
+    return fs.readdirSync(baseDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(baseDir, entry.name));
+  } catch (_error) {
+    return [];
+  }
+}
+
+function getCommonJavaCandidates() {
+  const executableName = getExecutableName('java');
+  const candidates = [
+    process.env.AI_MARKDOWN_JAVA_BIN,
+    process.env.PLANTUML_JAVA_BIN,
+    process.env.JAVA_BIN,
+    process.env.JAVA_HOME ? path.join(process.env.JAVA_HOME, 'bin', executableName) : '',
+    findExecutableInPath('java')
+  ];
+
+  if (process.platform === 'darwin') {
+    candidates.push(
+      '/opt/homebrew/opt/openjdk/bin/java',
+      '/usr/local/opt/openjdk/bin/java'
+    );
+  }
+
+  if (process.platform === 'win32') {
+    [
+      'C:\\Program Files\\Java',
+      'C:\\Program Files\\Eclipse Adoptium',
+      'C:\\Program Files\\Microsoft',
+      'C:\\Program Files\\BellSoft',
+      'C:\\Program Files\\Zulu',
+      'C:\\Program Files\\Amazon Corretto'
+    ].forEach((baseDir) => {
+      listChildDirectories(baseDir).forEach((childDir) => {
+        candidates.push(path.join(childDir, 'bin', executableName));
+      });
+    });
+  }
+
+  if (process.platform === 'linux') {
+    candidates.push('/usr/bin/java', '/usr/local/bin/java');
+  }
+
+  if (process.platform === 'darwin') {
+    listChildDirectories('/Library/Java/JavaVirtualMachines').forEach((childDir) => {
+      candidates.push(path.join(childDir, 'Contents', 'Home', 'bin', executableName));
+    });
+  }
+
+  return uniquePaths(candidates);
+}
+
+function getCommonGraphvizCandidates() {
+  const executableName = getExecutableName('dot');
+  const candidates = [
+    process.env.AI_MARKDOWN_GRAPHVIZ_DOT,
+    process.env.GRAPHVIZ_DOT,
+    process.env.PLANTUML_GRAPHVIZ_DOT,
+    findExecutableInPath('dot')
+  ];
+
+  if (process.platform === 'darwin') {
+    candidates.push('/opt/homebrew/bin/dot', '/usr/local/bin/dot');
+  }
+
+  if (process.platform === 'win32') {
+    candidates.push(
+      'C:\\Program Files\\Graphviz\\bin\\dot.exe',
+      'C:\\Program Files (x86)\\Graphviz\\bin\\dot.exe'
+    );
+
+    ['C:\\Program Files', 'C:\\Program Files (x86)'].forEach((baseDir) => {
+      listChildDirectories(baseDir)
+        .filter((dirPath) => path.basename(dirPath).toLowerCase().startsWith('graphviz'))
+        .forEach((graphvizDir) => {
+          candidates.push(path.join(graphvizDir, 'bin', executableName));
+        });
+    });
+  }
+
+  if (process.platform === 'linux') {
+    candidates.push('/usr/bin/dot', '/usr/local/bin/dot');
+  }
+
+  return uniquePaths(candidates);
+}
+
+function resolveExecutable(candidates) {
+  return candidates.find((candidate) => canReadFile(candidate)) || '';
+}
+
+function getLocalPlantUmlJarPath() {
+  const devPath = path.join(__dirname, 'src', 'vendor', 'plantuml.jar');
+  const packagedPath = path.join(process.resourcesPath, 'app.asar.unpacked', 'src', 'vendor', 'plantuml.jar');
+  return canReadFile(packagedPath) ? packagedPath : devPath;
+}
+
+function resolvePlantUmlRuntime() {
+  if (plantUmlRuntimeCache) {
+    return plantUmlRuntimeCache;
+  }
+
+  const runtime = {
+    javaBin: resolveExecutable(getCommonJavaCandidates()),
+    dotBin: resolveExecutable(getCommonGraphvizCandidates()),
+    jarPath: getLocalPlantUmlJarPath()
+  };
+
+  plantUmlRuntimeCache = runtime;
+  return runtime;
+}
+
+function buildProcessPath(extraEntries = []) {
+  return uniquePaths([...extraEntries, ...getPathEntries()]).join(path.delimiter);
+}
 
 function createWindow() {
   const bounds = loadWindowBounds(app, screen);
@@ -86,25 +254,38 @@ function sendChatEvent(webContents, payload) {
 
 function renderPlantUmlLocally(source) {
   return new Promise((resolve, reject) => {
-    const javaBin = OPENJDK_BIN;
+    const { javaBin, dotBin, jarPath } = resolvePlantUmlRuntime();
+    if (!canReadFile(jarPath)) {
+      reject(new Error('本地 PlantUML JAR 不存在，请检查应用资源是否完整。'));
+      return;
+    }
+
+    if (!javaBin) {
+      reject(new Error('未找到本地 Java 运行时。请安装 Java 17+ 并确保 `java` 在 PATH 中，或设置 `JAVA_HOME` / `AI_MARKDOWN_JAVA_BIN`。'));
+      return;
+    }
+
     const javaArgs = [
       '-Djava.awt.headless=true',
       '-jar',
-      LOCAL_PLANTUML_JAR,
+      jarPath,
       '-charset',
       'UTF-8',
       '-tsvg',
       '-pipe'
     ];
 
-    if (GRAPHVIZ_DOT) {
-      javaArgs.push('-graphvizdot', GRAPHVIZ_DOT);
+    if (dotBin) {
+      javaArgs.push('-graphvizdot', dotBin);
     }
 
     const child = spawn(javaBin, javaArgs, {
       env: {
         ...process.env,
-        PATH: `${path.join(HOMEBREW_PREFIX, 'opt/openjdk/bin')}:${path.join(HOMEBREW_PREFIX, 'bin')}:${process.env.PATH || ''}`
+        PATH: buildProcessPath([
+          path.dirname(javaBin),
+          dotBin ? path.dirname(dotBin) : ''
+        ])
       }
     });
 
@@ -125,7 +306,10 @@ function renderPlantUmlLocally(source) {
         return;
       }
 
-      reject(new Error(errorText || output || `本地 PlantUML 渲染失败（退出码 ${code}）`));
+      const guidance = !dotBin
+        ? ' 当前未检测到 Graphviz dot，请安装 Graphviz 并将 `dot` 加入 PATH，或设置 `GRAPHVIZ_DOT` / `AI_MARKDOWN_GRAPHVIZ_DOT`。'
+        : '';
+      reject(new Error((errorText || output || `本地 PlantUML 渲染失败（退出码 ${code}）`) + guidance));
     });
 
     child.stdin.write(String(source || ''));

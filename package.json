@@ -35,6 +35,9 @@
       "src/**/*"
     ],
     "asar": true,
+    "asarUnpack": [
+      "src/vendor/plantuml.jar"
+    ],
     "directories": {
       "output": "dist"
     },
