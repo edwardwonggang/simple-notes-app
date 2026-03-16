@@ -10,82 +10,93 @@
   <body>
     <div class="app-shell">
       <header class="topbar">
-        <div class="brand-mark" aria-hidden="true">
-          <span>✦</span>
+        <div class="topbar-brand">
+          <div class="brand-mark" aria-hidden="true">
+            <span>✦</span>
+          </div>
+          <div class="brand-copy">
+            <p class="brand-eyebrow">Workspace</p>
+            <h1>AI Notes Studio</h1>
+          </div>
         </div>
         <div class="topbar-actions">
-          <button id="themeToggle" class="icon-button" type="button" title="切换深浅色" aria-label="切换深浅色">
-            <span class="theme-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
-                <path
-                  d="M9.37 5.51A7 7 0 0 0 18.49 14.63A9 9 0 1 1 9.37 5.51Z"
-                  fill="currentColor"
-                />
-              </svg>
-            </span>
-          </button>
-          <div class="topbar-popover-shell">
-            <button
-              id="backgroundToggle"
-              class="icon-button"
-              type="button"
-              title="编辑区背景"
-              aria-label="编辑区背景"
-              aria-haspopup="dialog"
-              aria-expanded="false"
-            >
-              <span class="background-icon" aria-hidden="true">
+          <div class="topbar-action-group">
+            <button id="themeToggle" class="icon-button" type="button" title="切换深浅色" aria-label="切换深浅色">
+              <span class="theme-icon" aria-hidden="true">
                 <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
                   <path
-                    d="M5.75 4.5h12.5A1.75 1.75 0 0 1 20 6.25v11.5a1.75 1.75 0 0 1-1.75 1.75H5.75A1.75 1.75 0 0 1 4 17.75V6.25A1.75 1.75 0 0 1 5.75 4.5Zm0 1.5a.25.25 0 0 0-.25.25v1.8h13v-1.8a.25.25 0 0 0-.25-.25H5.75Zm-.25 3.55v8.2c0 .14.11.25.25.25h12.5c.14 0 .25-.11.25-.25v-8.2h-13Z"
+                    d="M9.37 5.51A7 7 0 0 0 18.49 14.63A9 9 0 1 1 9.37 5.51Z"
                     fill="currentColor"
                   />
-                  <path d="M8 11.25h8M8 14.25h8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
                 </svg>
               </span>
             </button>
-            <div id="backgroundPanel" class="topbar-popover" hidden>
-              <p class="topbar-popover-title">编辑区背景</p>
-              <div class="background-options" role="list">
-                <button type="button" class="background-option" data-editor-bg="default">
-                  <span class="background-swatch background-swatch-default" aria-hidden="true"></span>
-                  <span class="background-option-copy">
-                    <strong>默认</strong>
-                    <small>干净浅色面板</small>
-                  </span>
-                </button>
-                <button type="button" class="background-option" data-editor-bg="eye-care">
-                  <span class="background-swatch background-swatch-eye-care" aria-hidden="true"></span>
-                  <span class="background-option-copy">
-                    <strong>护眼</strong>
-                    <small>偏柔和的浅绿色纸面</small>
-                  </span>
-                </button>
-                <button type="button" class="background-option" data-editor-bg="paper">
-                  <span class="background-swatch background-swatch-paper" aria-hidden="true"></span>
-                  <span class="background-option-copy">
-                    <strong>稿纸</strong>
-                    <small>带轻微横线和边距参考</small>
-                  </span>
-                </button>
+            <div class="topbar-popover-shell">
+              <button
+                id="backgroundToggle"
+                class="icon-button"
+                type="button"
+                title="编辑区背景"
+                aria-label="编辑区背景"
+                aria-haspopup="dialog"
+                aria-expanded="false"
+              >
+                <span class="background-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                    <path
+                      d="M5.75 4.5h12.5A1.75 1.75 0 0 1 20 6.25v11.5a1.75 1.75 0 0 1-1.75 1.75H5.75A1.75 1.75 0 0 1 4 17.75V6.25A1.75 1.75 0 0 1 5.75 4.5Zm0 1.5a.25.25 0 0 0-.25.25v1.8h13v-1.8a.25.25 0 0 0-.25-.25H5.75Zm-.25 3.55v8.2c0 .14.11.25.25.25h12.5c.14 0 .25-.11.25-.25v-8.2h-13Z"
+                      fill="currentColor"
+                    />
+                    <path d="M8 11.25h8M8 14.25h8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+                  </svg>
+                </span>
+              </button>
+              <div id="backgroundPanel" class="topbar-popover" hidden>
+                <p class="topbar-popover-title">编辑区背景</p>
+                <div class="background-options" role="list">
+                  <button type="button" class="background-option" data-editor-bg="default">
+                    <span class="background-swatch background-swatch-default" aria-hidden="true"></span>
+                    <span class="background-option-copy">
+                      <strong>默认</strong>
+                      <small>干净浅色面板</small>
+                    </span>
+                  </button>
+                  <button type="button" class="background-option" data-editor-bg="eye-care">
+                    <span class="background-swatch background-swatch-eye-care" aria-hidden="true"></span>
+                    <span class="background-option-copy">
+                      <strong>护眼</strong>
+                      <small>偏柔和的浅绿色纸面</small>
+                    </span>
+                  </button>
+                  <button type="button" class="background-option" data-editor-bg="paper">
+                    <span class="background-swatch background-swatch-paper" aria-hidden="true"></span>
+                    <span class="background-option-copy">
+                      <strong>稿纸</strong>
+                      <small>带轻微横线和边距参考</small>
+                    </span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-          <button id="settingsToggle" class="icon-button" type="button" title="API 设置" aria-label="API 设置">
-            <span aria-hidden="true">⚙️</span>
-          </button>
-          <button id="clearButton" class="icon-button danger" type="button" title="清空文档" aria-label="清空文档">
-            <span aria-hidden="true">🗑️</span>
-          </button>
+          <div class="topbar-action-group topbar-action-group-strong">
+            <button id="settingsToggle" class="icon-button" type="button" title="API 设置" aria-label="API 设置">
+              <span aria-hidden="true">⚙️</span>
+            </button>
+            <button id="clearButton" class="icon-button danger" type="button" title="清空文档" aria-label="清空文档">
+              <span aria-hidden="true">🗑️</span>
+            </button>
+          </div>
         </div>
       </header>
 
       <main class="workspace">
-        <aside class="documents-sidebar" aria-label="文档列表">
+        <aside id="documentsSidebar" class="documents-sidebar" aria-label="文档列表">
           <div class="documents-sidebar-header">
-            <div>
+            <div class="documents-sidebar-copy">
               <p class="sidebar-eyebrow">Documents</p>
               <h2>文档记录</h2>
+              <p class="documents-sidebar-lead">聚合文档、AI 续写与图形渲染结果。</p>
             </div>
             <div class="documents-actions">
               <button id="newDocumentButton" class="icon-button" type="button" title="新建文档" aria-label="新建文档">
@@ -95,10 +106,32 @@
           </div>
           <div id="documentsList" class="documents-list" role="list"></div>
           <div class="documents-sidebar-footer">
-            <p class="documents-path-label">本地目录</p>
+            <p class="documents-path-label">本地工作区</p>
             <code id="documentsPath" class="documents-path"></code>
           </div>
         </aside>
+        <button
+          id="sidebarRailToggle"
+          class="sidebar-rail-toggle"
+          type="button"
+          title="收起侧栏"
+          aria-label="收起侧栏"
+          aria-pressed="false"
+        >
+          <span class="sidebar-rail-track" aria-hidden="true"></span>
+          <span class="sidebar-rail-knob" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+              <path
+                d="M9.5 6.75 14.75 12 9.5 17.25"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </span>
+        </button>
         <section
           id="documentView"
           class="document-view"
@@ -111,7 +144,7 @@
             <textarea
               id="promptInput"
               rows="1"
-              placeholder="向 AI 提问，Enter 发送，Ctrl + Enter 换行"
+              placeholder="向 AI 提问，Enter 发送，多行快捷键自动适配"
             ></textarea>
             <div id="promptStatusLabel" class="prompt-status-label" hidden>AI 正在回复中</div>
             <div class="composer-actions composer-actions-inline">
@@ -298,7 +331,7 @@
     <div id="diagramPreviewModal" class="modal-backdrop diagram-preview-backdrop" hidden>
       <section class="diagram-preview-panel" role="dialog" aria-modal="true" aria-labelledby="diagramPreviewTitle">
         <header class="diagram-preview-header">
-          <h2 id="diagramPreviewTitle">图形预览</h2>
+          <h2 id="diagramPreviewTitle">渲染预览</h2>
           <button id="diagramPreviewClose" class="ghost-button" type="button">关闭</button>
         </header>
         <div id="diagramPreviewContent" class="diagram-preview-content"></div>

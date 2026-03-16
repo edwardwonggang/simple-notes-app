@@ -1,4 +1,73 @@
 const { Agent, ProxyAgent, fetch } = require('undici');
+const { debugLog } = require('./debug-log');
+
+function flattenContentPart(value) {
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => flattenContentPart(item)).join('');
+  }
+
+  if (!value || typeof value !== 'object') {
+    return '';
+  }
+
+  if (typeof value.text === 'string') {
+    return value.text;
+  }
+
+  if (typeof value.content === 'string') {
+    return value.content;
+  }
+
+  if (Array.isArray(value.content)) {
+    return value.content.map((item) => flattenContentPart(item)).join('');
+  }
+
+  if (typeof value.reasoning_content === 'string') {
+    return value.reasoning_content;
+  }
+
+  if (typeof value.reasoning === 'string') {
+    return value.reasoning;
+  }
+
+  return '';
+}
+
+function extractChoiceText(choice = {}) {
+  return flattenContentPart(
+    choice.delta?.content ??
+    choice.delta?.text ??
+    choice.message?.content ??
+    choice.text ??
+    choice.reasoning ??
+    choice.delta?.reasoning ??
+    ''
+  );
+}
+
+function extractResponseText(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return '';
+  }
+
+  if (Array.isArray(payload.choices) && payload.choices.length) {
+    return payload.choices.map((choice) => extractChoiceText(choice)).join('');
+  }
+
+  if (Array.isArray(payload.output)) {
+    return payload.output.map((item) => flattenContentPart(item)).join('');
+  }
+
+  if (payload.message) {
+    return flattenContentPart(payload.message);
+  }
+
+  return flattenContentPart(payload.content ?? payload.text ?? '');
+}
 
 function normalizeApiUrl(input) {
   const value = String(input || '').trim();
@@ -69,7 +138,7 @@ function parseSseEvent(rawEvent) {
   try {
     const json = JSON.parse(payload);
     const choice = json.choices?.[0] || {};
-    const delta = choice.delta?.content ?? choice.message?.content ?? '';
+    const delta = extractChoiceText(choice);
     const finishReason = choice.finish_reason ?? null;
     return {
       done: false,
@@ -79,6 +148,21 @@ function parseSseEvent(rawEvent) {
   } catch (_error) {
     return null;
   }
+}
+
+function findSseBoundary(buffer) {
+  const lfBoundary = buffer.indexOf('\n\n');
+  const crlfBoundary = buffer.indexOf('\r\n\r\n');
+
+  if (lfBoundary < 0) {
+    return crlfBoundary;
+  }
+
+  if (crlfBoundary < 0) {
+    return lfBoundary;
+  }
+
+  return Math.min(lfBoundary, crlfBoundary);
 }
 
 async function readStream(response, onChunk, signal) {
@@ -102,13 +186,15 @@ async function readStream(response, onChunk, signal) {
 
     buffer += decoder.decode(value, { stream: true });
 
-    let boundaryIndex = buffer.indexOf('\n\n');
+    let boundaryIndex = findSseBoundary(buffer);
     while (boundaryIndex >= 0) {
       const eventText = buffer.slice(0, boundaryIndex);
-      buffer = buffer.slice(boundaryIndex + 2);
+      const boundaryLength = buffer.startsWith('\r\n\r\n', boundaryIndex) ? 4 : (buffer.slice(boundaryIndex, boundaryIndex + 4) === '\r\n\r\n' ? 4 : 2);
+      buffer = buffer.slice(boundaryIndex + boundaryLength);
       const parsed = parseSseEvent(eventText);
 
       if (parsed?.delta) {
+        debugLog('chat.stream', 'received stream chunk', { length: parsed.delta.length });
         onChunk(parsed.delta);
       }
 
@@ -116,7 +202,7 @@ async function readStream(response, onChunk, signal) {
         return;
       }
 
-      boundaryIndex = buffer.indexOf('\n\n');
+      boundaryIndex = findSseBoundary(buffer);
     }
   }
 
@@ -124,6 +210,18 @@ async function readStream(response, onChunk, signal) {
   if (tail?.delta) {
     onChunk(tail.delta);
   }
+}
+
+async function readJsonResponse(response, onChunk) {
+  const payload = await response.json();
+  const text = extractResponseText(payload);
+  if (text) {
+    debugLog('chat.json', 'received json response', { length: text.length });
+    onChunk(text);
+    return;
+  }
+
+  throw new Error('接口已返回结果，但未解析到可显示的文本内容。');
 }
 
 async function streamChatCompletion(config, messages, signal, onChunk) {
@@ -160,7 +258,19 @@ async function streamChatCompletion(config, messages, signal, onChunk) {
       throw new Error(`HTTP ${response.status}: ${text || response.statusText}`);
     }
 
-    await readStream(response, onChunk, signal);
+    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+    debugLog('chat.request', 'response received', {
+      apiUrl,
+      model: config.model,
+      status: response.status,
+      contentType
+    });
+    if (contentType.includes('text/event-stream')) {
+      await readStream(response, onChunk, signal);
+      return;
+    }
+
+    await readJsonResponse(response, onChunk);
   } finally {
     await dispatcher.close().catch(() => {});
   }

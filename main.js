@@ -12,6 +12,7 @@ const {
 } = require('./src/main/window-state');
 const { loadConfig, saveConfig, normalizeConfig } = require('./src/main/config-store');
 const { streamChatCompletion } = require('./src/main/chat-service');
+const { configureDebugLog, getDebugLogFilePath, debugLog } = require('./src/main/debug-log');
 const {
   initDocuments,
   openDocument,
@@ -92,8 +93,7 @@ function getCommonJavaCandidates() {
     process.env.AI_MARKDOWN_JAVA_BIN,
     process.env.PLANTUML_JAVA_BIN,
     process.env.JAVA_BIN,
-    process.env.JAVA_HOME ? path.join(process.env.JAVA_HOME, 'bin', executableName) : '',
-    findExecutableInPath('java')
+    process.env.JAVA_HOME ? path.join(process.env.JAVA_HOME, 'bin', executableName) : ''
   ];
 
   if (process.platform === 'darwin') {
@@ -128,6 +128,8 @@ function getCommonJavaCandidates() {
     });
   }
 
+  candidates.push(findExecutableInPath('java'));
+
   return uniquePaths(candidates);
 }
 
@@ -136,8 +138,7 @@ function getCommonGraphvizCandidates() {
   const candidates = [
     process.env.AI_MARKDOWN_GRAPHVIZ_DOT,
     process.env.GRAPHVIZ_DOT,
-    process.env.PLANTUML_GRAPHVIZ_DOT,
-    findExecutableInPath('dot')
+    process.env.PLANTUML_GRAPHVIZ_DOT
   ];
 
   if (process.platform === 'darwin') {
@@ -162,6 +163,8 @@ function getCommonGraphvizCandidates() {
   if (process.platform === 'linux') {
     candidates.push('/usr/bin/dot', '/usr/local/bin/dot');
   }
+
+  candidates.push(findExecutableInPath('dot'));
 
   return uniquePaths(candidates);
 }
@@ -193,6 +196,68 @@ function resolvePlantUmlRuntime() {
 
 function buildProcessPath(extraEntries = []) {
   return uniquePaths([...extraEntries, ...getPathEntries()]).join(path.delimiter);
+}
+
+function getPlatformName(platform = process.platform) {
+  if (platform === 'darwin') {
+    return 'macOS';
+  }
+  if (platform === 'win32') {
+    return 'Windows';
+  }
+  if (platform === 'linux') {
+    return 'Linux';
+  }
+  return platform;
+}
+
+function getPreferredLineBreakModifierLabel(platform = process.platform) {
+  return platform === 'darwin' ? 'Cmd' : 'Ctrl';
+}
+
+function getSystemInfo() {
+  const runtime = resolvePlantUmlRuntime();
+  const platform = process.platform;
+
+  return {
+    platform,
+    platformName: getPlatformName(platform),
+    isMac: platform === 'darwin',
+    isWindows: platform === 'win32',
+    isLinux: platform === 'linux',
+    preferredLineBreakModifier: getPreferredLineBreakModifierLabel(platform),
+    plantUmlRuntime: {
+      javaDetected: Boolean(runtime.javaBin),
+      dotDetected: Boolean(runtime.dotBin),
+      jarDetected: canReadFile(runtime.jarPath)
+    }
+  };
+}
+
+function getRuntimeInstallHint(tool) {
+  if (process.platform === 'darwin') {
+    if (tool === 'java') {
+      return ' 可在 macOS 上安装 Java 17+，例如执行 `brew install openjdk`，或设置 `JAVA_HOME` / `AI_MARKDOWN_JAVA_BIN`。';
+    }
+    if (tool === 'graphviz') {
+      return ' 可在 macOS 上安装 Graphviz，例如执行 `brew install graphviz`，或设置 `GRAPHVIZ_DOT` / `AI_MARKDOWN_GRAPHVIZ_DOT`。';
+    }
+  }
+
+  if (process.platform === 'win32') {
+    if (tool === 'java') {
+      return ' 请在 Windows 上安装 Java 17+ 并加入 PATH，或设置 `JAVA_HOME` / `AI_MARKDOWN_JAVA_BIN`。';
+    }
+    if (tool === 'graphviz') {
+      return ' 请在 Windows 上安装 Graphviz 并将 `dot.exe` 加入 PATH，或设置 `GRAPHVIZ_DOT` / `AI_MARKDOWN_GRAPHVIZ_DOT`。';
+    }
+  }
+
+  if (tool === 'java') {
+    return ' 请安装 Java 17+ 并确保 `java` 可执行，或设置 `JAVA_HOME` / `AI_MARKDOWN_JAVA_BIN`。';
+  }
+
+  return ' 请安装 Graphviz 并确保 `dot` 可执行，或设置 `GRAPHVIZ_DOT` / `AI_MARKDOWN_GRAPHVIZ_DOT`。';
 }
 
 function createWindow() {
@@ -249,6 +314,9 @@ function sendChatEvent(webContents, payload) {
   if (!webContents || webContents.isDestroyed()) {
     return;
   }
+  if (payload?.type !== 'chunk') {
+    debugLog('main.chat', 'send chat event', { type: payload?.type, requestId: payload?.requestId });
+  }
   webContents.send('chat:event', payload);
 }
 
@@ -261,7 +329,7 @@ function renderPlantUmlLocally(source) {
     }
 
     if (!javaBin) {
-      reject(new Error('未找到本地 Java 运行时。请安装 Java 17+ 并确保 `java` 在 PATH 中，或设置 `JAVA_HOME` / `AI_MARKDOWN_JAVA_BIN`。'));
+      reject(new Error(`未找到本地 Java 运行时。${getRuntimeInstallHint('java')}`));
       return;
     }
 
@@ -307,7 +375,7 @@ function renderPlantUmlLocally(source) {
       }
 
       const guidance = !dotBin
-        ? ' 当前未检测到 Graphviz dot，请安装 Graphviz 并将 `dot` 加入 PATH，或设置 `GRAPHVIZ_DOT` / `AI_MARKDOWN_GRAPHVIZ_DOT`。'
+        ? ` 当前未检测到 Graphviz dot。${getRuntimeInstallHint('graphviz')}`
         : '';
       reject(new Error((errorText || output || `本地 PlantUML 渲染失败（退出码 ${code}）`) + guidance));
     });
@@ -364,6 +432,14 @@ async function startChat(webContents, payload) {
     controller
   });
 
+  debugLog('main.chat', 'start chat request', {
+    requestId,
+    webContentsId,
+    model: config.model,
+    apiUrl: config.apiUrl,
+    messageCount: messages.length
+  });
+
   sendChatEvent(webContents, {
     type: 'started',
     requestId
@@ -400,6 +476,11 @@ async function startChat(webContents, payload) {
 }
 
 app.whenReady().then(() => {
+  configureDebugLog(app.getPath('userData'));
+  debugLog('main.app', 'app ready', {
+    userData: app.getPath('userData'),
+    debugLogFile: getDebugLogFilePath()
+  });
   createWindow();
 
   app.on('activate', () => {
@@ -428,3 +509,8 @@ ipcMain.handle('chat:stop', (event) => {
   return { stopped: true };
 });
 ipcMain.handle('diagram:render-plantuml', (_event, source) => renderPlantUmlLocally(source));
+ipcMain.handle('system:get-info', () => getSystemInfo());
+ipcMain.handle('debug:log', (_event, payload) => {
+  debugLog('renderer', payload?.message || 'renderer log', payload?.metadata);
+  return { ok: true, path: getDebugLogFilePath() };
+});

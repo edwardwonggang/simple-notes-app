@@ -1,5 +1,6 @@
 const dom = {
   workspace: document.querySelector('.workspace'),
+  documentsSidebar: document.getElementById('documentsSidebar'),
   inlinePrompt: document.getElementById('inlinePrompt'),
   themeToggle: document.getElementById('themeToggle'),
   backgroundToggle: document.getElementById('backgroundToggle'),
@@ -28,6 +29,7 @@ const dom = {
   documentsList: document.getElementById('documentsList'),
   documentsPath: document.getElementById('documentsPath'),
   newDocumentButton: document.getElementById('newDocumentButton'),
+  sidebarRailToggle: document.getElementById('sidebarRailToggle'),
   promptInput: document.getElementById('promptInput'),
   inlineModelPicker: document.getElementById('inlineModelPicker'),
   inlineModelTrigger: document.getElementById('inlineModelTrigger'),
@@ -45,11 +47,28 @@ const dom = {
 
 const THEME_KEY = 'ai_markdown_client_theme';
 const EDITOR_BG_KEY = 'ai_markdown_client_editor_bg';
-const PROMPT_PLACEHOLDER = '向 AI 提问，Enter 发送，Ctrl + Enter 换行';
+const SIDEBAR_COLLAPSED_KEY = 'ai_markdown_client_sidebar_collapsed';
+const SIDEBAR_WIDTH_KEY = 'ai_markdown_client_sidebar_width';
 const AUTOSAVE_DELAY = 700;
 const EDITOR_BACKGROUNDS = ['default', 'eye-care', 'paper'];
+const SIDEBAR_MIN_WIDTH = 220;
+const SIDEBAR_MAX_WIDTH = 420;
+const DEFAULT_SYSTEM_INFO = {
+  platform: 'unknown',
+  platformName: '当前系统',
+  isMac: false,
+  isWindows: false,
+  isLinux: false,
+  preferredLineBreakModifier: 'Ctrl',
+  plantUmlRuntime: {
+    javaDetected: false,
+    dotDetected: false,
+    jarDetected: false
+  }
+};
 
 const state = {
+  systemInfo: DEFAULT_SYSTEM_INFO,
   configStore: null,
   activeProfileId: '',
   selectedModelProfileId: '',
@@ -67,7 +86,16 @@ const state = {
   diagramRenderTimer: null,
   isSaving: false,
   pendingResave: false,
-  isDirty: false
+  isDirty: false,
+  sidebarResize: {
+    active: false,
+    pointerId: null,
+    startX: 0,
+    startWidth: 0,
+    moved: false,
+    suppressClick: false,
+    nextWidth: 0
+  }
 };
 
 const markdown = window.markdownit({
@@ -120,24 +148,6 @@ function sanitizeRichHtml(value) {
   });
 }
 
-function createDiagramBlockMarkup(type, source) {
-  return [
-    `<div class="diagram-block" data-diagram-type="${escapeHtml(type)}" contenteditable="false">`,
-    `<pre class="diagram-source" hidden>${escapeHtml(source)}</pre>`,
-    '<button class="diagram-expand-button" type="button" title="最大化查看" aria-label="最大化查看图形">',
-    '<span aria-hidden="true">',
-    '<svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">',
-    '<path d="M8 4.75H4.75V8M15.999 4.75h3.25V8M8 19.25H4.75V16M19.249 16v3.25h-3.25" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>',
-    '</svg>',
-    '</span>',
-    '</button>',
-    '<div class="diagram-render">',
-    `<div class="diagram-placeholder">${type.toUpperCase()} 渲染中...</div>`,
-    '</div>',
-    '</div>'
-  ].join('');
-}
-
 function createHighlightedCodeBlockMarkup(source, language = '') {
   const codeHtml = window.aiClient?.highlightCode
     ? window.aiClient.highlightCode(source, language)
@@ -150,14 +160,110 @@ function createHighlightedCodeBlockMarkup(source, language = '') {
   ].join('');
 }
 
-function createHtmlPreviewBlockMarkup(source, language = 'html') {
+function getRenderableLabel(type) {
+  switch (String(type || '').toLowerCase()) {
+    case 'html':
+      return 'HTML';
+    case 'markdown':
+      return 'Markdown';
+    case 'svg':
+      return 'SVG';
+    case 'mermaid':
+      return 'Mermaid';
+    case 'plantuml':
+      return 'PlantUML';
+    default:
+      return String(type || '内容').toUpperCase();
+  }
+}
+
+function createRenderableToolbarMarkup(type) {
+  const label = getRenderableLabel(type);
+
   return [
-    `<div class="html-preview-block" data-renderable-type="html" data-renderable-language="${escapeHtml(language)}" contenteditable="false">`,
-    `<pre class="html-preview-source" hidden>${escapeHtml(source)}</pre>`,
-    '<div class="html-preview-render"></div>',
-    createHighlightedCodeBlockMarkup(source, language),
+    '<div class="renderable-toolbar">',
+    `<div class="renderable-tabs" role="tablist" aria-label="${escapeHtml(label)} 视图切换">`,
+    '<button class="renderable-tab is-active" type="button" data-renderable-view-trigger="render" aria-pressed="true">渲染</button>',
+    '<button class="renderable-tab" type="button" data-renderable-view-trigger="source" aria-pressed="false">源码</button>',
+    '</div>',
+    '<div class="renderable-actions">',
+    '<button class="renderable-action-button" type="button" data-renderable-action="copy" title="复制源代码" aria-label="复制源代码">',
+    '复制',
+    '</button>',
+    '<button class="renderable-action-button" type="button" data-renderable-action="expand" title="放大渲染内容" aria-label="放大渲染内容">',
+    '<span aria-hidden="true">',
+    '<svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">',
+    '<path d="M8 4.75H4.75V8M15.999 4.75h3.25V8M8 19.25H4.75V16M19.249 16v3.25h-3.25" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>',
+    '</svg>',
+    '</span>',
+    '</button>',
+    '</div>',
     '</div>'
   ].join('');
+}
+
+function createRenderableBlockMarkup({
+  blockClassName,
+  type,
+  source,
+  language = '',
+  renderMarkup,
+  sourceLanguage = '',
+  extraAttributes = ''
+}) {
+  const safeLanguage = escapeHtml(sourceLanguage || language || type || '');
+
+  return [
+    `<div class="renderable-block ${escapeHtml(blockClassName)}" data-renderable-type="${escapeHtml(type)}" data-renderable-language="${safeLanguage}" data-renderable-view="render" contenteditable="false" ${extraAttributes}>`,
+    `<pre class="renderable-source" hidden>${escapeHtml(source)}</pre>`,
+    createRenderableToolbarMarkup(type),
+    '<div class="renderable-panels">',
+    '<section class="renderable-panel renderable-render-panel">',
+    renderMarkup,
+    '</section>',
+    '<section class="renderable-panel renderable-source-panel" hidden>',
+    createHighlightedCodeBlockMarkup(source, safeLanguage),
+    '</section>',
+    '</div>',
+    '</div>'
+  ].join('');
+}
+
+function createDiagramBlockMarkup(type, source) {
+  return createRenderableBlockMarkup({
+    blockClassName: 'diagram-block',
+    type,
+    source,
+    sourceLanguage: type === 'plantuml' ? 'plantuml' : type,
+    extraAttributes: `data-diagram-type="${escapeHtml(type)}"`,
+    renderMarkup: [
+      '<div class="diagram-render renderable-render-host">',
+      `<div class="diagram-placeholder">${type.toUpperCase()} 渲染中...</div>`,
+      '</div>'
+    ].join('')
+  });
+}
+
+function createHtmlPreviewBlockMarkup(source, language = 'html') {
+  return createRenderableBlockMarkup({
+    blockClassName: 'html-preview-block',
+    type: 'html',
+    source,
+    language,
+    sourceLanguage: language || 'html',
+    renderMarkup: '<div class="html-preview-render renderable-render-host"></div>'
+  });
+}
+
+function createMarkdownPreviewBlockMarkup(source, language = 'markdown') {
+  return createRenderableBlockMarkup({
+    blockClassName: 'markdown-preview-block',
+    type: 'markdown',
+    source,
+    language,
+    sourceLanguage: language || 'markdown',
+    renderMarkup: '<article class="markdown-body markdown-preview-render renderable-render-host"></article>'
+  });
 }
 
 markdown.renderer.rules.fence = (tokens, idx, options, env, self) => {
@@ -180,6 +286,10 @@ markdown.renderer.rules.fence = (tokens, idx, options, env, self) => {
     return createHtmlPreviewBlockMarkup(token.content, language || 'html');
   }
 
+  if (['markdown', 'md'].includes(language)) {
+    return createMarkdownPreviewBlockMarkup(token.content, language || 'markdown');
+  }
+
   return createHighlightedCodeBlockMarkup(token.content, language);
 };
 
@@ -187,6 +297,43 @@ function setStatus(text, tone = 'normal') {
   dom.statusText.hidden = !text;
   dom.statusText.textContent = text || '';
   dom.statusText.dataset.tone = tone;
+}
+
+function logRenderer(message, metadata = undefined) {
+  window.aiClient?.debugLog?.(message, metadata).catch(() => {});
+}
+
+function getPromptPlaceholder() {
+  const modifier = state.systemInfo?.preferredLineBreakModifier || 'Ctrl';
+  return `向 AI 提问，Enter 发送，${modifier} + Enter 换行`;
+}
+
+function applySystemInfo(systemInfo = {}) {
+  state.systemInfo = {
+    ...DEFAULT_SYSTEM_INFO,
+    ...systemInfo,
+    plantUmlRuntime: {
+      ...DEFAULT_SYSTEM_INFO.plantUmlRuntime,
+      ...(systemInfo?.plantUmlRuntime || {})
+    }
+  };
+
+  document.body.dataset.platform = state.systemInfo.platform || 'unknown';
+  if (dom.promptInput && !state.isGenerating) {
+    dom.promptInput.placeholder = getPromptPlaceholder();
+  }
+}
+
+function isPreferredComposerLineBreakShortcut(event) {
+  if (!event || event.key !== 'Enter') {
+    return false;
+  }
+
+  if (state.systemInfo?.isMac) {
+    return Boolean(event.metaKey) && !event.altKey;
+  }
+
+  return Boolean(event.ctrlKey) && !event.altKey;
 }
 
 function loadTheme() {
@@ -197,6 +344,150 @@ function loadTheme() {
 function loadEditorBackground() {
   const savedBackground = window.localStorage.getItem(EDITOR_BG_KEY);
   return EDITOR_BACKGROUNDS.includes(savedBackground) ? savedBackground : 'default';
+}
+
+function loadSidebarCollapsed() {
+  return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true';
+}
+
+function clampSidebarWidth(width) {
+  const numericWidth = Number(width);
+  if (!Number.isFinite(numericWidth)) {
+    return 280;
+  }
+  return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(numericWidth)));
+}
+
+function loadSidebarWidth() {
+  const savedWidth = window.localStorage.getItem(SIDEBAR_WIDTH_KEY);
+  return clampSidebarWidth(savedWidth ? Number(savedWidth) : 280);
+}
+
+function applySidebarWidth(width, { persist = true } = {}) {
+  const nextWidth = clampSidebarWidth(width);
+  document.body.style.setProperty('--sidebar-expanded-width', `${nextWidth}px`);
+  if (persist) {
+    window.localStorage.setItem(SIDEBAR_WIDTH_KEY, String(nextWidth));
+  }
+  window.requestAnimationFrame(() => {
+    updateDockedInlinePromptPosition();
+  });
+  return nextWidth;
+}
+
+function applySidebarCollapsed(collapsed) {
+  const isCollapsed = Boolean(collapsed);
+  document.body.dataset.sidebarCollapsed = isCollapsed ? 'true' : 'false';
+  dom.documentsSidebar?.classList.toggle('is-collapsed', isCollapsed);
+
+  if (dom.sidebarRailToggle) {
+    dom.sidebarRailToggle.title = isCollapsed ? '展开侧栏' : '收起侧栏';
+    dom.sidebarRailToggle.setAttribute('aria-label', isCollapsed ? '展开侧栏' : '收起侧栏');
+    dom.sidebarRailToggle.setAttribute('aria-pressed', isCollapsed ? 'true' : 'false');
+  }
+
+  window.requestAnimationFrame(() => {
+    updateDockedInlinePromptPosition();
+  });
+}
+
+function toggleSidebarCollapsed() {
+  const nextCollapsed = document.body.dataset.sidebarCollapsed !== 'true';
+  if (!nextCollapsed) {
+    applySidebarWidth(loadSidebarWidth(), { persist: false });
+  }
+  window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, nextCollapsed ? 'true' : 'false');
+  applySidebarCollapsed(nextCollapsed);
+}
+
+function endSidebarResize(pointerId = null) {
+  if (!state.sidebarResize.active && pointerId === null) {
+    return;
+  }
+
+  if (pointerId !== null && state.sidebarResize.pointerId !== pointerId) {
+    return;
+  }
+
+  if (state.sidebarResize.pointerId !== null) {
+    dom.sidebarRailToggle?.releasePointerCapture?.(state.sidebarResize.pointerId);
+  }
+
+  document.body.classList.remove('is-resizing-sidebar');
+  state.sidebarResize.active = false;
+  state.sidebarResize.pointerId = null;
+  state.sidebarResize.startX = 0;
+  state.sidebarResize.startWidth = 0;
+  state.sidebarResize.nextWidth = 0;
+}
+
+function handleSidebarResizeMove(event) {
+  if (!state.sidebarResize.active || event.pointerId !== state.sidebarResize.pointerId) {
+    return;
+  }
+
+  const deltaX = event.clientX - state.sidebarResize.startX;
+  if (!state.sidebarResize.moved && Math.abs(deltaX) < 4) {
+    return;
+  }
+
+  if (!state.sidebarResize.moved) {
+    state.sidebarResize.moved = true;
+    state.sidebarResize.suppressClick = true;
+    if (document.body.dataset.sidebarCollapsed === 'true') {
+      applySidebarCollapsed(false);
+      window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, 'false');
+    }
+  }
+
+  const nextWidth = applySidebarWidth(state.sidebarResize.startWidth + deltaX, { persist: false });
+  state.sidebarResize.nextWidth = nextWidth;
+}
+
+function handleSidebarResizeEnd(event) {
+  if (!state.sidebarResize.active || event.pointerId !== state.sidebarResize.pointerId) {
+    return;
+  }
+
+  if (state.sidebarResize.moved) {
+    applySidebarWidth(state.sidebarResize.nextWidth || state.sidebarResize.startWidth, { persist: true });
+  }
+
+  window.setTimeout(() => {
+    state.sidebarResize.suppressClick = false;
+  }, 0);
+
+  state.sidebarResize.moved = false;
+  endSidebarResize(event.pointerId);
+}
+
+function handleSidebarRailPointerDown(event) {
+  if (event.button !== 0) {
+    return;
+  }
+
+  event.preventDefault();
+
+  const isCollapsed = document.body.dataset.sidebarCollapsed === 'true';
+  state.sidebarResize.active = true;
+  state.sidebarResize.pointerId = event.pointerId;
+  state.sidebarResize.startX = event.clientX;
+  state.sidebarResize.startWidth = isCollapsed ? loadSidebarWidth() : loadSidebarWidth();
+  state.sidebarResize.nextWidth = state.sidebarResize.startWidth;
+  state.sidebarResize.moved = false;
+
+  document.body.classList.add('is-resizing-sidebar');
+  dom.sidebarRailToggle?.setPointerCapture?.(event.pointerId);
+}
+
+function handleSidebarRailClick(event) {
+  if (state.sidebarResize.suppressClick) {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
+
+  toggleSidebarCollapsed();
 }
 
 function applyTheme(theme) {
@@ -357,9 +648,39 @@ function buildHtmlPreviewDocument(source) {
 
 function transformLegacyRenderableBlocks(container = dom.documentView) {
   const scope = container || dom.documentView;
+  const legacyRenderableBlocks = Array.from(scope.querySelectorAll('.diagram-block, .html-preview-block, .markdown-preview-block'))
+    .filter((block) => !block.classList.contains('renderable-block'));
+
+  legacyRenderableBlocks.forEach((block) => {
+    const type = String(block.dataset.diagramType || block.dataset.renderableType || '').toLowerCase();
+    const language = String(block.dataset.renderableLanguage || type || '').toLowerCase();
+    const source = (
+      block.querySelector('.renderable-source, .diagram-source, .html-preview-source, .markdown-preview-source')?.textContent ||
+      ''
+    );
+    if (!source.trim()) {
+      return;
+    }
+
+    const wrapper = document.createElement('div');
+    if (block.classList.contains('html-preview-block') || type === 'html') {
+      wrapper.innerHTML = createHtmlPreviewBlockMarkup(source, language || 'html');
+    } else if (block.classList.contains('markdown-preview-block') || ['markdown', 'md'].includes(language)) {
+      wrapper.innerHTML = createMarkdownPreviewBlockMarkup(source, language || 'markdown');
+    } else {
+      const nextType = type === 'puml' || type === 'uml' ? 'plantuml' : (type || 'svg');
+      wrapper.innerHTML = createDiagramBlockMarkup(nextType, source);
+    }
+
+    const nextBlock = wrapper.firstElementChild;
+    if (nextBlock) {
+      block.replaceWith(nextBlock);
+    }
+  });
+
   const codeBlocks = Array.from(scope.querySelectorAll('pre > code')).filter((code) => {
     const pre = code.parentElement;
-    return pre && !pre.closest('.diagram-block, .html-preview-block');
+    return pre && !pre.closest('.renderable-block');
   });
 
   codeBlocks.forEach((code) => {
@@ -370,7 +691,11 @@ function transformLegacyRenderableBlocks(container = dom.documentView) {
     const inferredType = ['mermaid', 'plantuml', 'puml', 'uml', 'svg'].includes(language)
       ? language
       : (/^\s*@startuml\b/i.test(source) ? 'plantuml' : '');
-    const inferredRenderable = inferredType || (['html', 'htm'].includes(language) ? 'html' : '');
+    const inferredRenderable = inferredType || (
+      ['html', 'htm', 'markdown', 'md'].includes(language)
+        ? (['markdown', 'md'].includes(language) ? 'markdown' : 'html')
+        : ''
+    );
 
     if (!pre || !inferredRenderable) {
       return;
@@ -379,6 +704,8 @@ function transformLegacyRenderableBlocks(container = dom.documentView) {
     const wrapper = document.createElement('div');
     if (inferredRenderable === 'html') {
       wrapper.innerHTML = createHtmlPreviewBlockMarkup(source, language || 'html');
+    } else if (inferredRenderable === 'markdown') {
+      wrapper.innerHTML = createMarkdownPreviewBlockMarkup(source, language || 'markdown');
     } else {
       const nextType = inferredRenderable === 'puml' || inferredRenderable === 'uml'
         ? 'plantuml'
@@ -414,13 +741,33 @@ function resizeHtmlPreviewFrame(frame) {
   frame.style.height = `${Math.min(nextHeight + 2, 960)}px`;
 }
 
+function renderMarkdownPreviewBlocks(container = dom.documentView) {
+  const scope = container || dom.documentView;
+  const blocks = Array.from(scope.querySelectorAll('.markdown-preview-block'));
+
+  blocks.forEach((block) => {
+    block.setAttribute('contenteditable', 'false');
+    const source = block.querySelector('.renderable-source')?.textContent || '';
+    const host = block.querySelector('.markdown-preview-render');
+    if (!host) {
+      return;
+    }
+
+    host.innerHTML = source.trim()
+      ? sanitizeRichHtml(markdown.render(source))
+      : '<div class="html-preview-empty">Markdown 预览为空</div>';
+
+    block.classList.toggle('is-rendered', Boolean(source.trim()));
+  });
+}
+
 function renderHtmlPreviewBlocks(container = dom.documentView) {
   const scope = container || dom.documentView;
   const blocks = Array.from(scope.querySelectorAll('.html-preview-block'));
 
   blocks.forEach((block) => {
     block.setAttribute('contenteditable', 'false');
-    const source = block.querySelector('.html-preview-source')?.textContent || '';
+    const source = block.querySelector('.renderable-source')?.textContent || '';
     const host = block.querySelector('.html-preview-render');
     if (!host) {
       return;
@@ -453,6 +800,65 @@ function isDiagramPreviewOpen() {
   return Boolean(dom.diagramPreviewModal) && !dom.diagramPreviewModal.hidden;
 }
 
+function updateRenderableBlockView(block, nextView = 'render') {
+  if (!block) {
+    return;
+  }
+
+  const safeView = nextView === 'source' ? 'source' : 'render';
+  block.dataset.renderableView = safeView;
+
+  const renderPanel = block.querySelector('.renderable-render-panel');
+  const sourcePanel = block.querySelector('.renderable-source-panel');
+  if (renderPanel) {
+    renderPanel.hidden = safeView !== 'render';
+  }
+  if (sourcePanel) {
+    sourcePanel.hidden = safeView !== 'source';
+  }
+
+  block.querySelectorAll('[data-renderable-view-trigger]').forEach((button) => {
+    const isActive = button.dataset.renderableViewTrigger === safeView;
+    button.classList.toggle('is-active', isActive);
+    button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  });
+}
+
+async function copyTextToClipboard(text) {
+  const content = String(text || '');
+  if (!content) {
+    return false;
+  }
+
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(content);
+      return true;
+    }
+  } catch (_error) {
+    // Fallback below.
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = content;
+  textarea.setAttribute('readonly', 'true');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+
+  let copied = false;
+  try {
+    copied = document.execCommand('copy');
+  } catch (_error) {
+    copied = false;
+  } finally {
+    textarea.remove();
+  }
+
+  return copied;
+}
+
 function closeDiagramPreview() {
   if (!dom.diagramPreviewModal || !dom.diagramPreviewContent) {
     return;
@@ -467,12 +873,20 @@ function openDiagramPreview(block) {
     return;
   }
 
-  const render = block.querySelector('.diagram-render');
-  if (!render || !render.querySelector('svg')) {
+  const renderPanel = block.querySelector('.renderable-render-panel');
+  if (!renderPanel) {
     return;
   }
 
-  dom.diagramPreviewContent.innerHTML = render.innerHTML;
+  const clone = renderPanel.cloneNode(true);
+  clone.hidden = false;
+  clone.classList.add('renderable-preview-panel');
+  const previewTitle = document.getElementById('diagramPreviewTitle');
+  if (previewTitle) {
+    previewTitle.textContent = `${getRenderableLabel(block.dataset.renderableType || '内容')} 预览`;
+  }
+  dom.diagramPreviewContent.innerHTML = '';
+  dom.diagramPreviewContent.appendChild(clone);
   dom.diagramPreviewModal.hidden = false;
 }
 
@@ -481,7 +895,7 @@ async function renderDiagramBlock(block, index = 0) {
     return;
   }
 
-  const source = block.querySelector('.diagram-source')?.textContent || '';
+  const source = block.querySelector('.renderable-source')?.textContent || '';
   const host = block.querySelector('.diagram-render');
   const type = String(block.dataset.diagramType || '').toLowerCase();
   if (!source.trim() || !host) {
@@ -529,6 +943,7 @@ function scheduleDiagramRender(container = dom.documentView, delay = 180) {
   state.diagramRenderTimer = window.setTimeout(() => {
     state.diagramRenderTimer = null;
     transformLegacyRenderableBlocks(container);
+    renderMarkdownPreviewBlocks(container);
     renderHtmlPreviewBlocks(container);
     const blocks = Array.from((container || dom.documentView)?.querySelectorAll('.diagram-block') || []);
     blocks.forEach((block, index) => {
@@ -994,7 +1409,7 @@ function syncButtons() {
   dom.actionButton.setAttribute('aria-label', state.isGenerating ? '停止生成' : '发送');
   dom.inlinePrompt.classList.toggle('is-generating', state.isGenerating);
   dom.promptStatusLabel.hidden = !state.isGenerating;
-  dom.promptInput.placeholder = state.isGenerating ? '' : PROMPT_PLACEHOLDER;
+  dom.promptInput.placeholder = state.isGenerating ? '' : getPromptPlaceholder();
   dom.promptInput.setAttribute('aria-hidden', state.isGenerating ? 'true' : 'false');
   dom.newDocumentButton.disabled = state.isGenerating;
   dom.clearButton.disabled = state.isGenerating;
@@ -1059,8 +1474,89 @@ function ensureDocumentRoot() {
   return root;
 }
 
+function isEditorArtifactTextNode(node) {
+  return node?.nodeType === Node.TEXT_NODE && !String(node.textContent || '').replace(/\u200B/g, '').trim();
+}
+
+function getPreviousMeaningfulSibling(node) {
+  let current = node?.previousSibling || null;
+  while (current && isEditorArtifactTextNode(current)) {
+    current = current.previousSibling || null;
+  }
+  return current;
+}
+
+function getNextMeaningfulSibling(node) {
+  let current = node?.nextSibling || null;
+  while (current && isEditorArtifactTextNode(current)) {
+    current = current.nextSibling || null;
+  }
+  return current;
+}
+
+function isBlockBoundaryNode(node) {
+  return Boolean(node && node.nodeType === Node.ELEMENT_NODE && node.nodeName !== 'BR');
+}
+
+function cleanupContainerEditorArtifacts(container, { stripBreaksAroundBlocks = false } = {}) {
+  if (!container) {
+    return false;
+  }
+
+  let changed = false;
+
+  Array.from(container.childNodes).forEach((node) => {
+    if (isEditorArtifactTextNode(node)) {
+      node.remove();
+      changed = true;
+    }
+  });
+
+  Array.from(container.children).forEach((child) => {
+    if (child.nodeName !== 'P') {
+      return;
+    }
+
+    const text = String(child.textContent || '').replace(/\u200B/g, '').trim();
+    const hasMeaningfulChild = Array.from(child.children).some((node) => node.nodeName !== 'BR');
+    const hasOnlyEditorBreaks = Array.from(child.childNodes).every((node) => (
+      node.nodeName === 'BR' || isEditorArtifactTextNode(node)
+    ));
+
+    if (!text && !hasMeaningfulChild && hasOnlyEditorBreaks) {
+      child.remove();
+      changed = true;
+    }
+  });
+
+  Array.from(container.childNodes).forEach((node) => {
+    if (node.nodeName !== 'BR') {
+      return;
+    }
+
+    const previous = getPreviousMeaningfulSibling(node);
+    const next = getNextMeaningfulSibling(node);
+    const touchesBoundary = !previous || !next;
+    const duplicateBreak = previous?.nodeName === 'BR' || next?.nodeName === 'BR';
+    const touchesBlockBoundary = stripBreaksAroundBlocks && (
+      isBlockBoundaryNode(previous) || isBlockBoundaryNode(next)
+    );
+
+    if (touchesBoundary || duplicateBreak || touchesBlockBoundary) {
+      node.remove();
+      changed = true;
+    }
+  });
+
+  return changed;
+}
+
 function cleanupEmptyEditorArtifacts(root = ensureDocumentRoot()) {
   let changed = false;
+
+  if (cleanupContainerEditorArtifacts(root, { stripBreaksAroundBlocks: true })) {
+    changed = true;
+  }
 
   root.querySelectorAll('.doc-question').forEach((block) => {
     const text = block.textContent?.replace(/\u200B/g, '').trim() || '';
@@ -1071,17 +1567,22 @@ function cleanupEmptyEditorArtifacts(root = ensureDocumentRoot()) {
   });
 
   root.querySelectorAll('.doc-answer').forEach((block) => {
+    if (state.currentAnswerHost && block.contains(state.currentAnswerHost)) {
+      logRenderer('skip cleanup for active answer block', { isGenerating: state.isGenerating });
+      return;
+    }
+
     const text = block.textContent?.replace(/\u200B/g, '').trim() || '';
-    const hasRenderable = block.querySelector('.diagram-block, .html-preview-block');
+    const hasRenderable = block.querySelector('.renderable-block');
     if (!text && !hasRenderable) {
+      logRenderer('remove empty answer block', { isGenerating: state.isGenerating });
       block.remove();
       changed = true;
     }
   });
 
-  Array.from(root.childNodes).forEach((node) => {
-    if (node.nodeType === Node.TEXT_NODE && !String(node.textContent || '').replace(/\u200B/g, '').trim()) {
-      node.remove();
+  root.querySelectorAll('.doc-question-text, .markdown-body').forEach((container) => {
+    if (cleanupContainerEditorArtifacts(container, { stripBreaksAroundBlocks: true })) {
       changed = true;
     }
   });
@@ -1129,11 +1630,13 @@ function normalizeDocumentStructure() {
     changed = true;
   }
 
-  root.querySelectorAll('.diagram-block, .html-preview-block').forEach((block) => {
+  root.querySelectorAll('.renderable-block').forEach((block) => {
     if (block.getAttribute('contenteditable') !== 'false') {
       block.setAttribute('contenteditable', 'false');
       changed = true;
     }
+
+    updateRenderableBlockView(block, block.dataset.renderableView || 'render');
   });
 
   return changed;
@@ -1180,6 +1683,79 @@ function insertEditorLineBreak() {
   selection.addRange(range);
 }
 
+function setSelectionToRange(range) {
+  const selection = window.getSelection();
+  if (!selection || !range) {
+    return;
+  }
+
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+function handleEditorBackspaceLineBreak() {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) {
+    return false;
+  }
+
+  const range = selection.getRangeAt(0);
+  if (!dom.documentView.contains(range.startContainer)) {
+    return false;
+  }
+
+  if (range.startContainer.nodeType === Node.TEXT_NODE) {
+    const textNode = range.startContainer;
+    const text = String(textNode.textContent || '');
+    const visibleText = text.replace(/\u200B/g, '');
+    const previousSibling = textNode.previousSibling;
+
+    if (
+      range.startOffset === text.length &&
+      !visibleText &&
+      previousSibling?.nodeName === 'BR' &&
+      textNode.parentNode
+    ) {
+      const parent = textNode.parentNode;
+      const index = Array.prototype.indexOf.call(parent.childNodes, previousSibling);
+      previousSibling.remove();
+      textNode.remove();
+
+      const nextRange = document.createRange();
+      nextRange.setStart(parent, Math.max(0, index));
+      nextRange.collapse(true);
+      setSelectionToRange(nextRange);
+      queueAutosave(true);
+      return true;
+    }
+  }
+
+  if (range.startContainer.nodeType === Node.ELEMENT_NODE) {
+    const parent = range.startContainer;
+    const previousSibling = parent.childNodes[range.startOffset - 1];
+    const currentSibling = parent.childNodes[range.startOffset];
+
+    if (
+      previousSibling?.nodeName === 'BR' &&
+      currentSibling?.nodeType === Node.TEXT_NODE &&
+      !String(currentSibling.textContent || '').replace(/\u200B/g, '').trim()
+    ) {
+      const index = Array.prototype.indexOf.call(parent.childNodes, previousSibling);
+      previousSibling.remove();
+      currentSibling.remove();
+
+      const nextRange = document.createRange();
+      nextRange.setStart(parent, Math.max(0, index));
+      nextRange.collapse(true);
+      setSelectionToRange(nextRange);
+      queueAutosave(true);
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function getCaretRect(range) {
   const rect = range.getBoundingClientRect();
   if (rect && (rect.width || rect.height)) {
@@ -1213,14 +1789,28 @@ function positionInlinePrompt(range) {
   dom.inlinePrompt.style.top = `${top + dom.documentView.offsetTop}px`;
 }
 
+function getDocumentColumnRect() {
+  const article = dom.documentView.querySelector('.document-article');
+  if (article) {
+    const rect = article.getBoundingClientRect();
+    if (rect.width > 0) {
+      return rect;
+    }
+  }
+
+  return dom.documentView.getBoundingClientRect();
+}
+
 function updateDockedInlinePromptPosition() {
   if (!dom.inlinePrompt.classList.contains('is-docked')) {
     return;
   }
 
   const editorRect = dom.documentView.getBoundingClientRect();
-  const popupWidth = Math.min(920, Math.max(360, editorRect.width - 40));
-  const centerX = editorRect.left + editorRect.width / 2;
+  const columnRect = getDocumentColumnRect();
+  const availableWidth = Math.min(columnRect.width, editorRect.width - 44);
+  const popupWidth = Math.min(920, Math.max(360, availableWidth));
+  const centerX = columnRect.left + (columnRect.width / 2);
 
   dom.inlinePrompt.style.left = `${Math.round(centerX)}px`;
   dom.inlinePrompt.style.top = '';
@@ -1231,6 +1821,14 @@ function updateDockedInlinePromptPosition() {
 function dockInlinePrompt() {
   dom.inlinePrompt.classList.add('is-docked');
   updateDockedInlinePromptPosition();
+}
+
+function resetInlinePromptFloatingState() {
+  dom.inlinePrompt.classList.remove('is-docked', 'is-generating');
+  dom.inlinePrompt.style.left = '';
+  dom.inlinePrompt.style.width = '';
+  dom.inlinePrompt.style.bottom = '';
+  dom.inlinePrompt.style.top = '';
 }
 
 function showInlinePromptAtSelection() {
@@ -1248,14 +1846,19 @@ function showInlinePromptAtSelection() {
     return;
   }
 
-  state.promptAnchorRange = normalizePromptAnchorRange(range) || range.cloneRange();
+  state.promptAnchorRange = range.cloneRange();
+  state.promptAnchorRange.collapse(true);
   dom.inlinePrompt.hidden = false;
+  resetInlinePromptFloatingState();
   positionInlinePrompt(state.promptAnchorRange);
   syncButtons();
   syncPromptHeight();
-  window.setTimeout(() => {
+  window.requestAnimationFrame(() => {
+    if (!dom.inlinePrompt.classList.contains('is-docked') && state.promptAnchorRange) {
+      positionInlinePrompt(state.promptAnchorRange);
+    }
     dom.promptInput.focus();
-  }, 0);
+  });
 }
 
 function isCaretAtLineStart() {
@@ -1399,6 +2002,7 @@ function appendAnswerBlock() {
   insertBlockAtAnchor(section);
   state.currentAnswerHost = section.querySelector('.markdown-body');
   state.currentAnswerRaw = '';
+  logRenderer('append answer block', { connected: state.currentAnswerHost?.isConnected });
   scrollDocumentToBottom();
   queueAutosave(true);
 }
@@ -1412,8 +2016,16 @@ function normalizeReplyContent(content) {
 
 function updateCurrentAnswer(contentChunk) {
   if (!state.currentAnswerHost) {
+    logRenderer('drop chunk because currentAnswerHost missing', { length: String(contentChunk || '').length });
     return;
   }
+
+  logRenderer('update current answer', {
+    chunkLength: String(contentChunk || '').length,
+    hostConnected: state.currentAnswerHost.isConnected,
+    accumulatedLength: state.currentAnswerRaw.length
+  });
+
   state.currentAnswerRaw += contentChunk;
   state.currentAnswerHost.innerHTML = sanitizeRichHtml(markdown.render(normalizeReplyContent(state.currentAnswerRaw)));
   scheduleDiagramRender(state.currentAnswerHost);
@@ -1732,9 +2344,9 @@ function getAdjacentRenderableBlock(direction = 'backward') {
         continue;
       }
       if (candidate.nodeType === Node.ELEMENT_NODE) {
-        const renderable = candidate.matches('.diagram-block, .html-preview-block')
+        const renderable = candidate.matches('.renderable-block')
           ? candidate
-          : candidate.querySelector?.('.diagram-block, .html-preview-block');
+          : candidate.querySelector?.('.renderable-block');
         if (renderable) {
           return renderable;
         }
@@ -1869,6 +2481,11 @@ async function handleSend() {
     model: selectedModel
   });
   setSelectedModel(requestSourceProfile.id, selectedModel);
+  logRenderer('handle send', {
+    model: selectedModel,
+    provider: requestSourceProfile.name,
+    promptLength: prompt.length
+  });
 
   appendMessage('user', prompt);
   appendMessage('assistant', '');
@@ -1923,6 +2540,11 @@ function clearConversation() {
 }
 
 function finalizeGeneration(message, tone = 'normal') {
+  logRenderer('finalize generation', {
+    message,
+    tone,
+    accumulatedLength: state.currentAnswerRaw.length
+  });
   scheduleDiagramRender(dom.documentView, 0);
   state.isGenerating = false;
   state.currentAnswerHost = null;
@@ -1938,6 +2560,10 @@ function handleChatEvent(payload) {
     return;
   }
 
+  if (payload.type !== 'chunk') {
+    logRenderer('handle chat event', { type: payload.type, requestId: payload.requestId });
+  }
+
   if (payload.type === 'started') {
     state.currentRequestId = payload.requestId;
     return;
@@ -1950,6 +2576,10 @@ function handleChatEvent(payload) {
   if (payload.type === 'chunk') {
     const pending = getPendingAssistantMessage();
     if (!pending) {
+      logRenderer('drop chunk because pending assistant missing', {
+        requestId: payload.requestId,
+        chunkLength: String(payload.chunk || '').length
+      });
       return;
     }
     pending.content += payload.chunk;
@@ -1977,8 +2607,11 @@ async function bootstrap() {
     throw new Error('预加载桥接未生效，请重启应用。');
   }
 
+  applySystemInfo(await window.aiClient.getSystemInfo());
   applyTheme(loadTheme());
   applyEditorBackground(loadEditorBackground());
+  applySidebarWidth(loadSidebarWidth(), { persist: false });
+  applySidebarCollapsed(loadSidebarCollapsed());
 
   const [{ configStore, configPath }, snapshot] = await Promise.all([
     window.aiClient.loadConfig(),
@@ -1993,6 +2626,8 @@ async function bootstrap() {
   setStatus('就绪。');
 
   dom.themeToggle.addEventListener('click', toggleTheme);
+  dom.sidebarRailToggle?.addEventListener('pointerdown', handleSidebarRailPointerDown);
+  dom.sidebarRailToggle?.addEventListener('click', handleSidebarRailClick);
   dom.toggleApiKeyVisibilityButton?.addEventListener('click', toggleApiKeyVisibility);
   dom.backgroundToggle?.addEventListener('click', (event) => {
     event.stopPropagation();
@@ -2052,13 +2687,13 @@ async function bootstrap() {
     if (event.key !== 'Enter') {
       return;
     }
-    if (event.ctrlKey) {
+    if (isPreferredComposerLineBreakShortcut(event)) {
       return;
     }
     if (event.isComposing) {
       return;
     }
-    if (!event.metaKey && !event.altKey && !event.shiftKey) {
+    if (!event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
       event.preventDefault();
       handleSend();
     }
@@ -2066,13 +2701,40 @@ async function bootstrap() {
 
   dom.documentView.addEventListener('input', handleDocumentInput);
   dom.documentView.addEventListener('click', (event) => {
-    const trigger = event.target.closest('.diagram-expand-button');
-    if (!trigger) {
+    const block = event.target.closest('.renderable-block');
+    if (!block) {
       return;
     }
+
+    const viewTrigger = event.target.closest('[data-renderable-view-trigger]');
+    if (viewTrigger) {
+      event.preventDefault();
+      event.stopPropagation();
+      updateRenderableBlockView(block, viewTrigger.dataset.renderableViewTrigger || 'render');
+      queueAutosave(true);
+      return;
+    }
+
+    const actionTrigger = event.target.closest('[data-renderable-action]');
+    if (!actionTrigger) {
+      return;
+    }
+
     event.preventDefault();
     event.stopPropagation();
-    openDiagramPreview(trigger.closest('.diagram-block'));
+
+    if (actionTrigger.dataset.renderableAction === 'expand') {
+      updateRenderableBlockView(block, 'render');
+      openDiagramPreview(block);
+      return;
+    }
+
+    if (actionTrigger.dataset.renderableAction === 'copy') {
+      void copyTextToClipboard(block.querySelector('.renderable-source')?.textContent || '')
+        .then((copied) => {
+          setStatus(copied ? '源码已复制。' : '源码复制失败。', copied ? 'normal' : 'error');
+        });
+    }
   });
   dom.documentView.addEventListener('keydown', (event) => {
     if (
@@ -2083,8 +2745,16 @@ async function bootstrap() {
       isCaretAtLineStart()
     ) {
       event.preventDefault();
+      resetInlinePromptFloatingState();
       showInlinePromptAtSelection();
       return;
+    }
+
+    if (event.key === 'Backspace' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      if (handleEditorBackspaceLineBreak()) {
+        event.preventDefault();
+        return;
+      }
     }
 
     if ((event.key === 'Backspace' || event.key === 'Delete') && !event.ctrlKey && !event.metaKey && !event.altKey) {
@@ -2157,6 +2827,10 @@ async function bootstrap() {
       hideInlinePrompt(true);
     }
   });
+
+  window.addEventListener('pointermove', handleSidebarResizeMove);
+  window.addEventListener('pointerup', handleSidebarResizeEnd);
+  window.addEventListener('pointercancel', handleSidebarResizeEnd);
 
   window.addEventListener('beforeunload', () => {
     if (state.saveTimer) {

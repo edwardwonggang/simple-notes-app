@@ -2,6 +2,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 const hljs = require('highlight.js/lib/common');
 
 contextBridge.exposeInMainWorld('aiClient', {
+  debugLog: (message, metadata) => ipcRenderer.invoke('debug:log', { message, metadata }),
+  getSystemInfo: () => ipcRenderer.invoke('system:get-info'),
   loadConfig: () => ipcRenderer.invoke('config:load'),
   saveConfig: (config) => ipcRenderer.invoke('config:save', config),
   initDocuments: () => ipcRenderer.invoke('docs:init'),

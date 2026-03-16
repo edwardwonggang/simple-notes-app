@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>酷炫句子小工具 · V2</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="bg-orbit"></div>
+    <div class="bg-noise"></div>
+
+    <main class="shell" aria-label="酷炫桌面句子小工具">
+      <header class="shell-header">
+        <div class="title-group">
+          <span class="title-main">句子快写板</span>
+          <span class="title-sub">双击复制 · 右键粘贴 · 空格切色</span>
+        </div>
+        <div class="actions">
+          <button
+            id="toggleTop"
+            class="pill-btn"
+            aria-label="窗口置顶"
+            title="窗口置顶 / 取消置顶"
+          >
+            <span class="pill-dot"></span>
+            <span class="pill-text">置顶</span>
+          </button>
+          <button
+            id="clearAll"
+            class="icon-btn danger"
+            aria-label="清空全部内容"
+            title="清空全部内容"
+          >
+            <span aria-hidden="true">清空</span>
+          </button>
+        </div>
+      </header>
+
+      <section
+        id="editor"
+        class="editor"
+        contenteditable="true"
+        spellcheck="false"
+        aria-label="输入或粘贴你的句子"
+      ></section>
+
+      <footer class="status">
+        <span id="hint" class="status-text"></span>
+        <span class="status-help">
+          双击：复制当前句子 ｜ 右键：粘贴剪贴板
+        </span>
+      </footer>
+    </main>
+
+    <script src="renderer.js"></script>
+  </body>
+  </html>
+
