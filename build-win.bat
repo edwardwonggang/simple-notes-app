@@ -12,14 +12,18 @@ if errorlevel 1 (
 )
 
 echo [2/3] Installing dependencies...
-call npm install
+if exist package-lock.json (
+  call npm ci
+) else (
+  call npm install
+)
 if errorlevel 1 (
-  echo [ERROR] npm install failed.
+  echo [ERROR] Dependency installation failed.
   pause
   exit /b 1
 )
 
-echo [3/3] Building Windows installer (.exe)...
+echo [3/3] Building Windows x64 installer and portable app...
 call npm run dist:win
 if errorlevel 1 (
   echo [ERROR] Build failed.
@@ -30,6 +34,9 @@ if errorlevel 1 (
 echo.
 echo Build completed.
 echo Output folder: %cd%\dist
+echo Generated files:
+echo - Installer: AIMarkdownClient Setup *.exe
+echo - Portable:  AIMarkdownClient Portable *.exe
 if exist "%cd%\dist" start "" "%cd%\dist"
 
 echo.

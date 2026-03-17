@@ -17,6 +17,11 @@ npm install
 npm start
 ```
 
+Windows 本地可直接双击：
+
+- `run-win.bat`：一键安装依赖并启动开发版
+- `build-win.bat`：一键打包 Windows x64 安装版和便携版
+
 ## 图形渲染依赖
 
 - PlantUML 使用仓库内置的 `plantuml.jar`
@@ -36,7 +41,18 @@ npm run dist:mac
 npm run dist:win
 ```
 
+- `npm run dist:win` 默认产出 Windows `x64` 双版本：
+  - 安装版：`AIMarkdownClient Setup *.exe`
+  - 便携版：`AIMarkdownClient Portable *.exe`
+- 也可以单独执行：
+
+```bash
+npm run dist:win:installer
+npm run dist:win:portable
+```
+
 - 打包后 `plantuml.jar` 会自动从 `asar` 中解包，保证本地 Java 可以正常读取
+- 仓库已内置 GitHub Actions 工作流：推送到 `main` 后会自动在 Windows 环境构建并上传产物
 
 ## 配置
 
